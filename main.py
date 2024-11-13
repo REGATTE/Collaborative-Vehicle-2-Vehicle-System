@@ -6,6 +6,16 @@ from Simulation.generate_traffic import TrafficManager
 from Simulation.sensors import Sensors_Setup
 from agents.navigation.basic_agent import BasicAgent
 
+from utils.config.config_loader import load_config
+
+config_path = "utils/config/config.yaml"
+
+try:
+    config = load_config(config_path)
+except Exception as e:
+    print("Failed to load configuration. Exiting program.")
+    exit(1)  # Exit program if config loading fails
+
 class CarlaManager:
     def __init__(self):
         self.client = carla.Client('localhost', 2000)
@@ -19,23 +29,23 @@ class CarlaManager:
         self.ego_vehicle = None
         self.traffic_manager = TrafficManager(self.world, self.blueprint_library)
 
-    def setup_display(self, width=800, height=600):
+    def setup_display(self):
         pygame.init()
-        self.display = pygame.display.set_mode((width, height))
+        self.display = pygame.display.set_mode((config.pygame_display.width, config.pygame_display.height))
         pygame.display.set_caption("CARLA Simulation")
         print("Pygame display initialized.")
 
     def spawn_ego_vehicle(self):
         spawn_point = self.world.get_map().get_spawn_points()[0]
-        ego_vehicle_bp = self.blueprint_library.filter('vehicle.tesla.model3')[0]
+        ego_vehicle_bp = self.blueprint_library.filter(config.simulated_vehicles.ego_vehicle)[0]
         self.ego_vehicle = EgoVehicle(self.world, ego_vehicle_bp, spawn_point)
         print("Ego vehicle spawned.")
 
     def run_simulation(self):
         self.setup_display()
         self.spawn_ego_vehicle()
-        self.traffic_manager.spawn_smart_vehicles(4)  # Spawn 4 additional smart vehicles
-        self.traffic_manager.spawn_random_traffic(10)  # Spawn 10 random vehicles
+        self.traffic_manager.spawn_smart_vehicles(config.simulated_vehicles.smp)  # Spawn smart vehicles
+        self.traffic_manager.spawn_random_traffic(config.simulated_vehicles.rvt)  # Spawn random vehicles
 
         clock = pygame.time.Clock()
         try:

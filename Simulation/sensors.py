@@ -1,3 +1,13 @@
+from utils.config.config_loader import load_config
+
+config_path = "utils/config/config.yaml"
+
+try:
+    config = load_config(config_path)
+except Exception as e:
+    print("Failed to load configuration. Exiting program.")
+    exit(1)  # Exit program if config loading fails
+
 class Sensors_Setup:
     def __init__(self):
         pass
@@ -14,31 +24,80 @@ class Sensors_Setup:
             1x GPS
         """
         
-        sensors = [
+        return [
             # Front Camera
             {
-                'type': 'sensor.camera.rgb', 'x': 0.7, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 300, 'height': 200, 'fov': 100, 'id': 'Front'
+                'type': 'sensor.camera.rgb',
+                'x': 0.7,
+                'y': 0.0,
+                'z': config.sensors.z,
+                'roll': 0.0,
+                'pitch': 0.0,
+                'yaw': 0.0,
+                'width': config.sensors.camera_width,
+                'height': config.sensors.camera_height,
+                'fov': config.sensors.camera_fov,
+                'id': 'Front_Camera',
             },
             # Left Camera
             {
-                'type': 'sensor.camera.rgb', 'x': 0.0, 'y': -0.7, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': -90.0, 'width': 300, 'height': 200, 'fov': 100, 'id': 'Left'
+                'type': 'sensor.camera.rgb',
+                'x': 0.0,
+                'y': -0.7,
+                'z': config.sensors.z,
+                'roll': 0.0,
+                'pitch': 0.0,
+                'yaw': -90.0,
+                'width': config.sensors.camera_width,
+                'height': config.sensors.camera_height,
+                'fov': config.sensors.camera_fov,
+                'id': 'Left_Camera',
             },
             # Right Camera
             {
-                'type': 'sensor.camera.rgb', 'x': 0.0, 'y': 0.7, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 90.0,  'width': 300, 'height': 200, 'fov': 100, 'id': 'Right'
+                'type': 'sensor.camera.rgb',
+                'x': 0.0,
+                'y': 0.7,
+                'z': config.sensors.z,
+                'roll': 0.0,
+                'pitch': 0.0,
+                'yaw': 90.0,
+                'width': config.sensors.camera_width,
+                'height': config.sensors.camera_height,
+                'fov': config.sensors.camera_fov,
+                'id': 'Right_Camera',
             },
             # Back Camera
             {
-                'type': 'sensor.camera.rgb', 'x': -0.7, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 180.0,  'width': 300, 'height': 200, 'fov': 100, 'id': 'Back'
+                'type': 'sensor.camera.rgb',
+                'x': -0.7,
+                'y': 0.0,
+                'z': config.sensors.z,
+                'roll': 0.0,
+                'pitch': 0.0,
+                'yaw': 180.0,
+                'width': config.sensors.camera_width,
+                'height': config.sensors.camera_height,
+                'fov': config.sensors.camera_fov,
+                'id': 'Back_Camera',
             },
             # LiDAR
             {
-                'type': 'sensor.lidar.ray_cast', 'x': 0.0, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'id': 'LIDAR'
+                'type': 'sensor.lidar.ray_cast',
+                'x': 0.0,
+                'y': 0.0,
+                'z': config.sensors.z,
+                'roll': 0.0,
+                'pitch': 0.0,
+                'yaw': 0.0,
+                'id': 'LIDAR',
             },
             # GPS
             {
-                'type': 'sensor.other.gnss', 'x': 0.7, 'y': -0.4, 'z': 1.60, 'id': 'GPS'
-            }
+                'type': 'sensor.other.gnss',
+                'x': 0.7,
+                'y': -0.4,
+                'z': config.sensors.z,
+                'id': 'GPS',
+            },
         ]
-        
-        return sensors

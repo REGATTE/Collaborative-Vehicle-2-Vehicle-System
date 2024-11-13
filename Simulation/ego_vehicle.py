@@ -24,6 +24,9 @@ class EgoVehicle:
             sensor.listen(lambda data: self.process_sensor_data(data, sensor_spec['id']))
 
     def process_sensor_data(self, data, sensor_id):
+        """
+        Only focussing on LiDAR and GPS.
+        """
         processed_data = data_processing_utils.process_data(data)  # Utilize data processing utility
         if sensor_id == 'LIDAR':
             self.agent.handle_lidar_data(processed_data)  # Example: lidar data processing
