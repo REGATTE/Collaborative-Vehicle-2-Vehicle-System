@@ -1,103 +1,20 @@
-from utils.config.config_loader import load_config
-
-config_path = "utils/config/config.yaml"
-
-try:
-    config = load_config(config_path)
-except Exception as e:
-    print("Failed to load configuration. Exiting program.")
-    exit(1)  # Exit program if config loading fails
-
-class Sensors_Setup:
+class Sensors:
     def __init__(self):
+        # Add your initialization logic here
         pass
-    
-    def sensors(self):
-        """
-        Define the sensor suite required by all the vehicles.
+
+    def sensor_suite(self):  # pylint: disable=no-self-use
         
-        All the smart vehicles will have the same sensor suite, to keep processing minimal.
-        
-        Sensor Suite:
-            4x Camera: 1 camera on each side
-            1x LiDAR: 1 main 360 lidar on the top
-            1x GPS
-        """
-        
-        return [
-            # Front Camera
-            {
-                'type': 'sensor.camera.rgb',
-                'x': 0.7,
-                'y': 0.0,
-                'z': config.sensors.z,
-                'roll': 0.0,
-                'pitch': 0.0,
-                'yaw': 0.0,
-                'width': config.sensors.camera_width,
-                'height': config.sensors.camera_height,
-                'fov': config.sensors.camera_fov,
-                'id': 'Front_Camera',
-            },
-            # Left Camera
-            {
-                'type': 'sensor.camera.rgb',
-                'x': 0.0,
-                'y': -0.7,
-                'z': config.sensors.z,
-                'roll': 0.0,
-                'pitch': 0.0,
-                'yaw': -90.0,
-                'width': config.sensors.camera_width,
-                'height': config.sensors.camera_height,
-                'fov': config.sensors.camera_fov,
-                'id': 'Left_Camera',
-            },
-            # Right Camera
-            {
-                'type': 'sensor.camera.rgb',
-                'x': 0.0,
-                'y': 0.7,
-                'z': config.sensors.z,
-                'roll': 0.0,
-                'pitch': 0.0,
-                'yaw': 90.0,
-                'width': config.sensors.camera_width,
-                'height': config.sensors.camera_height,
-                'fov': config.sensors.camera_fov,
-                'id': 'Right_Camera',
-            },
-            # Back Camera
-            {
-                'type': 'sensor.camera.rgb',
-                'x': -0.7,
-                'y': 0.0,
-                'z': config.sensors.z,
-                'roll': 0.0,
-                'pitch': 0.0,
-                'yaw': 180.0,
-                'width': config.sensors.camera_width,
-                'height': config.sensors.camera_height,
-                'fov': config.sensors.camera_fov,
-                'id': 'Back_Camera',
-            },
-            # LiDAR
-            {
-                'type': 'sensor.lidar.ray_cast',
-                'x': 0.0,
-                'y': 0.0,
-                'z': config.sensors.z,
-                'roll': 0.0,
-                'pitch': 0.0,
-                'yaw': 0.0,
-                'id': 'LIDAR',
-            },
-            # GPS
-            {
-                'type': 'sensor.other.gnss',
-                'x': 0.7,
-                'y': -0.4,
-                'z': config.sensors.z,
-                'id': 'GPS',
-            },
+        sensors = [
+            #Camera
+            {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': -0.4, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 1280, 'height': 720, 'fov': 100, 'id': 'Left'},
+            {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': 0.4, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 1280, 'height': 720, 'fov': 100, 'id': 'Right'},
+            {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 1280, 'height': 720, 'fov': 100, 'id': 'Center'},
+            #Lidar
+            {'type': 'sensor.lidar.ray_cast', 'x': 0.7, 'y': 0.0, 'z': 1.60, 'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0, 'range': 50, 'rotation_frequency': 20, 'channels': 64, 'upper_fov': 4, 'lower_fov': -20, 'points_per_second': 2304000, 'id': 'LIDAR'},
+            #GPS
+            {'type': 'sensor.other.gnss', 'x': 0.7, 'y': -0.4, 'z': 1.60, 'id': 'GPS'},
+            # Depth Camera
+            {'type': 'sensor.camera.depth', 'x': 0.7, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 1280, 'height': 720, 'fov': 100, 'id': 'DepthCamera'}
         ]
+        return sensors
