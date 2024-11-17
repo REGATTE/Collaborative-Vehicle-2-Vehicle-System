@@ -2,7 +2,6 @@ import pygame
 import numpy as np
 import carla
 import logging
-import threading
 import queue
 
 
@@ -15,9 +14,9 @@ class EgoVehicleVisualizer:
         self.sensors = sensors
         self.width = 640  # Default width for each sensor window
         self.height = 360  # Default height for each sensor window
-        self.surface_map = {}
+        self.surface_map = {sensor.type_id: None for sensor in sensors}
         pygame.init()
-        self.window = pygame.display.set_mode((self.width * len(sensors), self.height), pygame.HWSURFACE | pygame.DOUBLEBUF)
+        self.window = pygame.display.set_mode((self.width, self.height), pygame.HWSURFACE | pygame.DOUBLEBUF)
         pygame.display.set_caption("Ego Vehicle Sensors Visualization")
 
     def update_window(self, sensor_id, image):
@@ -26,13 +25,12 @@ class EgoVehicleVisualizer:
         :param sensor_id: ID of the sensor to update.
         :param image: NumPy array representing the sensor image.
         """
-        if sensor_id in self.surface_map:
-            img_surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
-            self.surface_map[sensor_id] = img_surface
+        img_surface = pygame.surfarray.make_surface(image.swapaxes(0, 1))
+        self.surface_map[sensor_id] = img_surface
 
         self.window.fill((0, 0, 0))  # Clear the window
-        for idx, (sensor_id, surface) in enumerate(self.surface_map.items()):
-            self.window.blit(surface, (self.width * idx, 0))
+        if self.surface_map[sensor_id]:
+            self.window.blit(self.surface_map[sensor_id], (0, 0))
         pygame.display.flip()
 
     def close(self):
@@ -42,8 +40,24 @@ class EgoVehicleVisualizer:
         pygame.quit()
 
 
-import queue
-import threading
+def project_lidar_to_2d(points, img_size):
+    """
+    Projects LIDAR points to a 2D plane for visualization.
+    :param points: LIDAR points as a numpy array.
+    :param img_size: Tuple (width, height) of the visualization image.
+    :return: A numpy array with the LIDAR projection.
+    """
+    lidar_data = np.array([
+        (int((p[0] + 50) * img_size[0] / 100), int((p[1] + 50) * img_size[1] / 100))
+        for p in points if -50 <= p[0] <= 50 and -50 <= p[1] <= 50
+    ])
+    lidar_data = lidar_data[
+        (lidar_data[:, 0] >= 0) & (lidar_data[:, 0] < img_size[0]) &
+        (lidar_data[:, 1] >= 0) & (lidar_data[:, 1] < img_size[1])
+    ]
+    lidar_img = np.zeros((img_size[1], img_size[0], 3), dtype=np.uint8)
+    lidar_img[lidar_data[:, 1], lidar_data[:, 0]] = [255, 255, 255]
+    return lidar_img
 
 def visualize_ego_sensors(world, sensors):
     """
@@ -53,6 +67,7 @@ def visualize_ego_sensors(world, sensors):
     """
     current_sensor_index = 0  # Start with the first sensor
     sensor_data_queue = queue.Queue()  # Shared queue for sensor data
+    visualizer = EgoVehicleVisualizer(sensors)
 
     def sensor_callback(sensor):
         def callback(data):
@@ -60,56 +75,71 @@ def visualize_ego_sensors(world, sensors):
             Callback function to process sensor data and store it in a shared queue.
             :param data: Sensor data.
             """
-            sensor_type = sensor.type_id
-            if 'camera' in sensor_type.lower():
-                # Process camera image
-                array = np.frombuffer(data.raw_data, dtype=np.uint8)
-                array = array.reshape((data.height, data.width, 4))[:, :, :3]
-                sensor_data_queue.put((sensor_type, array))
-            elif 'lidar' in sensor_type.lower():
-                # Process lidar data
-                lidar_image = np.zeros((360, 640, 3), dtype=np.uint8)  # Example size
-                sensor_data_queue.put((sensor_type, lidar_image))
-            elif 'gnss' in sensor_type.lower():
-                # Log GPS data as text
-                coords = f"Lat: {data.latitude:.6f}, Lon: {data.longitude:.6f}, Alt: {data.altitude:.2f}"
-                logging.info(f"GPS Data: {coords}")
-                sensor_data_queue.put((sensor_type, None))
-        return callback
+            try:
+                sensor_type = sensor.type_id
+                if 'camera' in sensor_type.lower():
+                    # Process camera image
+                    array = np.frombuffer(data.raw_data, dtype=np.uint8)
+                    array = array.reshape((data.height, data.width, 4))[:, :, :3]
+                    sensor_data_queue.put((sensor_type, array))
+                elif 'lidar' in sensor_type.lower():
+                    # Process lidar data
+                    points = np.frombuffer(data.raw_data, dtype=np.float32).reshape(-1, 4)
+                    lidar_img = project_lidar_to_2d(points, (640, 360))
+                    sensor_data_queue.put((sensor_type, lidar_img))
+                elif 'gnss' in sensor_type.lower():
+                    # GPS data logged but not visualized
+                    coords = f"Lat: {data.latitude:.6f}\nLon: {data.longitude:.6f}\nAlt: {data.altitude:.2f}"
+                    logging.info(f"GPS Data: {coords}")
+                    sensor_data_queue.put((sensor_type, None))
+                elif 'depth' in sensor_type.lower():
+                    # Process depth data directly
+                    max_depth = 100.0  # Maximum depth for normalization (in meters)
+                    raw_depth = np.frombuffer(data.raw_data, dtype=np.float32).reshape((data.height, data.width))
+                    normalized_depth = np.clip(raw_depth / max_depth * 255, 0, 255).astype(np.uint8)  # Normalize depth to [0, 255]
 
-    # Attach callbacks to sensors
-    sensors[current_sensor_index].listen(sensor_callback(sensors[current_sensor_index]))
+                    # Convert to 3-channel grayscale for visualization
+                    depth_image = np.stack([normalized_depth] * 3, axis=-1)
+                    surface = pygame.surfarray.make_surface(depth_image.swapaxes(0, 1))
+            except Exception as e:
+                logging.error(f"Error in sensor callback: {e}")
+        return callback
 
     try:
         pygame.init()
-        window_width, window_height = 640, 360  # Default visualization size
-        screen = pygame.display.set_mode((window_width, window_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
+        screen = pygame.display.set_mode((640, 360), pygame.HWSURFACE | pygame.DOUBLEBUF)
         pygame.display.set_caption("Ego Vehicle Sensors Visualization")
+
+        # Start listening to the first sensor
+        sensors[current_sensor_index].listen(sensor_callback(sensors[current_sensor_index]))
+        logging.info(f"Listening to sensor: {sensors[current_sensor_index].type_id}")
 
         running = True
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-                    break
                 if event.type == pygame.KEYUP and event.key == pygame.K_TAB:
-                    # Stop current sensor and switch to the next
+                    # Stop current sensor
                     sensors[current_sensor_index].stop()
                     current_sensor_index = (current_sensor_index + 1) % len(sensors)
                     sensors[current_sensor_index].listen(sensor_callback(sensors[current_sensor_index]))
+                    logging.info(f"Switched to sensor: {sensors[current_sensor_index].type_id}")
 
             # Update display with the latest sensor data
             while not sensor_data_queue.empty():
                 sensor_type, data = sensor_data_queue.get()
                 if data is not None:
-                    surface = pygame.surfarray.make_surface(data.swapaxes(0, 1))
-                    screen.blit(surface, (0, 0))
-                    pygame.display.flip()
+                    visualizer.update_window(sensor_type, data)
 
-    except KeyboardInterrupt:
-        pass
+    except Exception as e:
+        logging.error(f"Error in visualization: {e}")
     finally:
+        # Cleanup sensors
         for sensor in sensors:
-            sensor.stop()
-            sensor.destroy()
-        pygame.quit()
+            try:
+                sensor.stop()
+                sensor.destroy()
+            except Exception as e:
+                logging.warning(f"Failed to cleanup sensor {sensor.id}: {e}")
+        visualizer.close()
