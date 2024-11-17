@@ -179,8 +179,8 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     if camera.is_listening:
         camera.stop()
     camera.destroy()
+    
     pygame.quit()
-
 def main():
     """
     Main function to initialize the CARLA simulation and run the game loop.
@@ -220,9 +220,11 @@ def main():
     ego_vehicle_sensors = attach_sensor_suite(world, ego_vehicle, sensor_suite)
     vehicle_mapping["ego_veh"]["sensors"] = ego_vehicle_sensors
 
+    # If the --vis_ego flag is set, visualize the ego vehicle's sensors
     if args.vis_ego:
+        logging.info("Visualizing ego vehicle sensors...")
         visualize_ego_sensors(world, ego_vehicle_sensors)
-        return
+        return  # Exit after visualizing
 
     camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
     camera, camera_bp = attach_camera(world, ego_vehicle, camera_transform)
@@ -243,7 +245,6 @@ def main():
         pygame.quit()
         cleanup(client, vehicles, [])
         logging.info("Simulation ended. Cleaned up all resources.")
-
 
 if __name__ == "__main__":
     main()

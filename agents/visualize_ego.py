@@ -59,6 +59,7 @@ def project_lidar_to_2d(points, img_size):
     lidar_img[lidar_data[:, 1], lidar_data[:, 0]] = [255, 255, 255]
     return lidar_img
 
+
 def visualize_ego_sensors(world, sensors):
     """
     Visualize sensor data for the ego vehicle and allow toggling between sensors with the Tab key.
@@ -89,9 +90,8 @@ def visualize_ego_sensors(world, sensors):
                     sensor_data_queue.put((sensor_type, lidar_img))
                 elif 'gnss' in sensor_type.lower():
                     # GPS data logged but not visualized
-                    coords = f"Lat: {data.latitude:.6f}\nLon: {data.longitude:.6f}\nAlt: {data.altitude:.2f}"
+                    coords = f"Lat: {data.latitude:.6f}, Lon: {data.longitude:.6f}, Alt: {data.altitude:.2f}"
                     logging.info(f"GPS Data: {coords}")
-                    sensor_data_queue.put((sensor_type, None))
             except Exception as e:
                 logging.error(f"Error in sensor callback: {e}")
         return callback
