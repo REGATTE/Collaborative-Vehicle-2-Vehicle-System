@@ -92,15 +92,6 @@ def visualize_ego_sensors(world, sensors):
                     coords = f"Lat: {data.latitude:.6f}\nLon: {data.longitude:.6f}\nAlt: {data.altitude:.2f}"
                     logging.info(f"GPS Data: {coords}")
                     sensor_data_queue.put((sensor_type, None))
-                elif 'depth' in sensor_type.lower():
-                    # Process depth data directly
-                    max_depth = 100.0  # Maximum depth for normalization (in meters)
-                    raw_depth = np.frombuffer(data.raw_data, dtype=np.float32).reshape((data.height, data.width))
-                    normalized_depth = np.clip(raw_depth / max_depth * 255, 0, 255).astype(np.uint8)  # Normalize depth to [0, 255]
-
-                    # Convert to 3-channel grayscale for visualization
-                    depth_image = np.stack([normalized_depth] * 3, axis=-1)
-                    surface = pygame.surfarray.make_surface(depth_image.swapaxes(0, 1))
             except Exception as e:
                 logging.error(f"Error in sensor callback: {e}")
         return callback
