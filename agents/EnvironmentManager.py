@@ -2,6 +2,7 @@ import carla
 import logging
 import random
 import numpy as np
+import pygame
 
 from Simulation.generate_traffic import spawn_vehicles
 
@@ -156,6 +157,33 @@ class EnvironmentManager:
         ])
         return intrinsic_matrix
 
+    def draw_vehicle_labels_menu_bar(self, screen, font, vehicle_mapping, width, active_vehicle_label):
+        """
+        Displays labels for all vehicles (ego and smart) on a static menu bar at the top of the PyGame window.
+        Highlights the currently active vehicle.
+        :param screen: PyGame display surface.
+        :param font: PyGame font for text rendering.
+        :param vehicle_mapping: Dictionary of vehicles and their roles (e.g., ego_veh, smart_veh_1).
+        :param width: Width of the PyGame window.
+        :param active_vehicle_label: Label of the currently active vehicle.
+        """
+        # Create a menu bar area
+        menu_height = 30  # Height of the menu bar
+        pygame.draw.rect(screen, (50, 50, 50), (0, 0, width, menu_height))  # Dark gray menu bar
+
+        # Calculate dynamic spacing
+        num_labels = len(vehicle_mapping)
+        spacing = max(10, (width - 20) // num_labels)  # Ensure a minimum spacing of 10 pixels
+
+        # Display labels in the menu bar
+        x_offset = 10  # Starting x position for text
+        for label, vehicle_data in vehicle_mapping.items():
+            # Highlight the active vehicle
+            color = (255, 255, 0) if label == active_vehicle_label else (255, 255, 255)  # Yellow for active, white otherwise
+            vehicle_id_text = f"{label} (ID: {vehicle_data['actor'].id})"
+            text_surface = font.render(vehicle_id_text, True, color)
+            screen.blit(text_surface, (x_offset, 5))  # Render text at the top
+            x_offset += spacing  # Increment x position for next label
 
     
     def draw_vehicle_labels(self, screen, font, camera, vehicle_mapping, intrinsic_matrix, width, height):

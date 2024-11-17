@@ -42,15 +42,20 @@ def setup_synchronous_mode(world, traffic_manager, config):
     traffic_manager.set_random_device_seed(0)  # Consistent behavior
     random.seed(0)
 
-
 class RenderObject:
     """
     Handles rendering images from the camera to a PyGame surface.
     """
     def __init__(self, width, height):
+        """
+        Initializes the RenderObject with a surface and dimensions.
+        :param width: The width of the PyGame surface.
+        :param height: The height of the PyGame surface.
+        """
+        self.width = width
+        self.height = height
         init_image = np.random.randint(0, 255, (height, width, 3), dtype='uint8')
         self.surface = pygame.surfarray.make_surface(init_image.swapaxes(0, 1))
-
 
 def attach_sensor_suite(world, vehicle, sensor_suite):
     """
@@ -89,33 +94,46 @@ def attach_sensor_suite(world, vehicle, sensor_suite):
     return sensors
 
 
-def initialize_pygame(camera_bp):
+def initialize_pygame(camera_bp, num_labels, fixed_resolution=(1920, 1080)):
     """
-    Initializes the PyGame window based on the camera settings.
+    Initializes the PyGame window with a fixed resolution or dynamic calculation.
     :param camera_bp: Blueprint of the camera.
-    :return: PyGame display surface and camera resolution (width, height).
+    :param num_labels: Number of labels to display in the menu bar.
+    :param fixed_resolution: Fixed resolution for the PyGame window.
+    :return: PyGame display surface and adjusted resolution (width, height).
     """
-    image_w = camera_bp.get_attribute("image_size_x").as_int()
-    image_h = camera_bp.get_attribute("image_size_y").as_int()
-
     pygame.init()
-    game_display = pygame.display.set_mode((image_w, image_h), pygame.HWSURFACE | pygame.DOUBLEBUF)
+
+    # Use the fixed resolution directly
+    window_width, window_height = fixed_resolution
+    game_display = pygame.display.set_mode((window_width, window_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
     game_display.fill((0, 0, 0))
     pygame.display.flip()
 
-    return game_display, image_w, image_h
+    return game_display, window_width, window_height
 
+def pygame_callback(image, render_object):
+    """
+    Callback function to process camera images and render them in PyGame.
+    :param image: Camera image from CARLA.
+    :param render_object: RenderObject to display the image.
+    """
+    try:
+        # Convert raw image data to RGB format
+        array = np.frombuffer(image.raw_data, dtype=np.uint8)
+        array = array.reshape((image.height, image.width, 4))[:, :, :3]  # Drop alpha channel
+        array = array[:, :, ::-1]  # Convert BGRA to RGB
 
-def pygame_callback(data, obj):
-    """
-    Processes camera data and updates the PyGame display surface.
-    :param data: Image data from the camera.
-    :param obj: RenderObject to update the surface.
-    """
-    img = np.reshape(np.copy(data.raw_data), (data.height, data.width, 4))
-    img = img[:, :, :3]  # Extract RGB channels
-    img = img[:, :, ::-1]  # Convert from BGRA to RGB
-    obj.surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
+        # Scale the image to fit the render object's surface dimensions
+        scaled_image = pygame.transform.scale(
+            pygame.surfarray.make_surface(array.swapaxes(0, 1)),
+            (render_object.width, render_object.height)
+        )
+
+        # Update the render surface
+        render_object.surface = scaled_image
+    except Exception as e:
+        logging.error(f"Error in pygame_callback: {e}")
 
 
 def attach_camera(world, ego_vehicle, camera_transform):
@@ -133,22 +151,27 @@ def attach_camera(world, ego_vehicle, camera_transform):
 def game_loop(world, game_display, camera, render_object, control_object, vehicles, camera_transform, vehicle_mapping, intrinsic_matrix, env_manager):
     """
     Main game loop for updating the CARLA world and PyGame display.
-    Allows switching between vehicles using the Tab key.
     """
     crashed = False
     font = pygame.font.SysFont('Arial', 16)
+    menu_bar_height = 30
     width, height = game_display.get_size()
 
-    # List of all vehicles
+    # List of vehicle labels
     vehicle_keys = list(vehicle_mapping.keys())
-    current_vehicle_index = 0  # Start with the first vehicle (typically ego)
+    current_vehicle_index = 0
+    active_vehicle_label = vehicle_keys[current_vehicle_index]
 
     while not crashed:
         world.tick()  # Advance simulation by one tick
-        game_display.blit(render_object.surface, (0, 0))
+        game_display.fill((0, 0, 0))  # Clear the screen
 
-        # Render vehicle labels using the env_manager instance
-        env_manager.draw_vehicle_labels(game_display, font, camera, vehicle_mapping, intrinsic_matrix, width, height)
+        # Render the camera feed
+        if render_object.surface:
+            game_display.blit(render_object.surface, (0, menu_bar_height))  # Offset for menu bar height
+
+        # Render the menu bar
+        env_manager.draw_vehicle_labels_menu_bar(game_display, font, vehicle_mapping, width, active_vehicle_label)
 
         pygame.display.flip()
         control_object.process_control()
@@ -161,26 +184,22 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
                 if event.key == pygame.K_TAB:
                     # Switch to the next vehicle
                     current_vehicle_index = (current_vehicle_index + 1) % len(vehicle_keys)
-                    current_vehicle_label = vehicle_keys[current_vehicle_index]
-                    logging.info(f"Switched to vehicle: {current_vehicle_label}")
+                    active_vehicle_label = vehicle_keys[current_vehicle_index]
+                    logging.info(f"Switched to vehicle: {active_vehicle_label}")
 
-                    # Attach camera to the newly selected vehicle
-                    new_vehicle = vehicle_mapping[current_vehicle_label]["actor"]
-
-                    # Stop and destroy the old camera properly
+                    # Reattach the camera to the newly selected vehicle
+                    new_vehicle = vehicle_mapping[active_vehicle_label]["actor"]
                     if camera.is_listening:
                         camera.stop()
                     camera.destroy()
-
-                    # Create and attach a new camera to the selected vehicle
                     camera, camera_bp = attach_camera(world, new_vehicle, camera_transform)
                     camera.listen(lambda image: pygame_callback(image, render_object))
 
     if camera.is_listening:
         camera.stop()
     camera.destroy()
-    
     pygame.quit()
+
 def main():
     """
     Main function to initialize the CARLA simulation and run the game loop.
@@ -226,15 +245,15 @@ def main():
         visualize_ego_sensors(world, ego_vehicle_sensors)
         return  # Exit after visualizing
 
+    # Attach camera to the ego vehicle
     camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
     camera, camera_bp = attach_camera(world, ego_vehicle, camera_transform)
 
-    image_width = camera_bp.get_attribute("image_size_x").as_int()
-    image_height = camera_bp.get_attribute("image_size_y").as_int()
-    intrinsic_matrix = env_manager.get_camera_intrinsic(camera_bp, image_width, image_height)
+    # Initialize PyGame with fixed resolution
+    game_display, window_width, window_height = initialize_pygame(camera_bp, len(vehicle_mapping), fixed_resolution=(1920, 1080))
 
-    game_display = pygame.display.set_mode((image_width, image_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
-    render_object = RenderObject(image_width, image_height)
+    intrinsic_matrix = env_manager.get_camera_intrinsic(camera_bp, window_width, window_height - 30)  # Adjust for menu bar
+    render_object = RenderObject(window_width, window_height - 30)  # Adjust for menu bar
     control_object = ControlObject(ego_vehicle)
 
     camera.listen(lambda image: pygame_callback(image, render_object))
@@ -245,6 +264,7 @@ def main():
         pygame.quit()
         cleanup(client, vehicles, [])
         logging.info("Simulation ended. Cleaned up all resources.")
+
 
 if __name__ == "__main__":
     main()
