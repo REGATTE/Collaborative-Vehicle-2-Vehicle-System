@@ -3,12 +3,16 @@ import random
 import pygame
 import numpy as np
 import logging
+import argparse
+import threading
+
 from agents.controller import ControlObject
 from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, cleanup
 from Simulation.sensors import Sensors  # Import Sensors class for the sensor suite
-
 from agents.EnvironmentManager import EnvironmentManager
+from agents.visualize_ego import visualize_ego_sensors
 
+from utils.config.config_loader import load_config
 
 # Function to initialize CARLA client and world
 def initialize_carla():
@@ -19,14 +23,14 @@ def initialize_carla():
 
 
 # Function to set up CARLA in synchronous mode
-def setup_synchronous_mode(world, traffic_manager):
+def setup_synchronous_mode(world, traffic_manager, config):
     settings = world.get_settings()
-    settings.synchronous_mode = True  # Enables synchronous mode
-    settings.fixed_delta_seconds = 0.05  # Simulation time step
+    settings.synchronous_mode = config.simulation.synchronous_mode #synchronous mode check
+    settings.fixed_delta_seconds = config.simulation.fixed_delta_seconds #tick time
     world.apply_settings(settings)
 
     traffic_manager.set_global_distance_to_leading_vehicle(5.0)  # Maintain a safe distance
-    traffic_manager.set_synchronous_mode(True)  # Keep consistent simulation timing
+    traffic_manager.set_synchronous_mode(config.simulation.synchronous_mode)  # Keep consistent simulation timing
     traffic_manager.set_random_device_seed(0)  # Consistent behavior
     random.seed(0)
 
@@ -100,48 +104,55 @@ def spawn_and_attach_sensors(client, world, traffic_manager, spawn_points, numbe
     return vehicles, sensor_attachments
 
 
-def designate_ego_and_smart_vehicles(vehicles, world):
+def designate_ego_and_smart_vehicles(vehicles, world, config):
     """
     Designates one vehicle as the ego vehicle and the rest as smart vehicles.
     Adds labels to each vehicle in the simulation with increased height for better visibility.
+    Maintains a mapping of vehicle IDs to their actors and sensors.
+    :param vehicles: List of spawned vehicle actor IDs.
+    :param world: CARLA world instance.
+    :param config: Configuration settings.
+    :return: Tuple of ego vehicle actor, list of smart vehicle actors, and a vehicle mapping.
     """
+    vehicle_mapping = {}  # Dictionary to store mapping of vehicle ID to actor and sensors
+
+    # Select and label the ego vehicle
     ego_vehicle_id = random.choice(vehicles)
     ego_vehicle = world.get_actor(ego_vehicle_id)
     logging.info(f"Designated vehicle {ego_vehicle.id} as the main ego vehicle.")
 
-    # Add a label for the ego vehicle
     ego_location = ego_vehicle.get_location()
     ego_location.z += 3.0  # Raise the label above the vehicle
     world.debug.draw_string(
         ego_location,
         "EGO_VEHICLE",
         draw_shadow=False,
-        color=carla.Color(r=255, g=0, b=0),  # Red label for the ego vehicle
+        color=carla.Color(*config.colors.ego_vehicle),
         life_time=0,  # Persistent label
-        persistent_lines=True
+        persistent_lines=config.simulation.debug_labels
     )
+    vehicle_mapping["EGO"] = {"actor": ego_vehicle, "sensors": []}  # Initialize sensors list for EGO
 
+    # Select and label the smart vehicles
     smart_vehicle_ids = [vid for vid in vehicles if vid != ego_vehicle_id]
     smart_vehicles = [world.get_actor(vid) for vid in smart_vehicle_ids]
 
-    # Add labels for smart vehicles
     for idx, smart_vehicle in enumerate(smart_vehicles, start=1):
         smart_location = smart_vehicle.get_location()
         smart_location.z += 3.0  # Raise the label above the vehicle
+        label = f"SMART_CAR_{idx}"
         world.debug.draw_string(
             smart_location,
-            f"SMART_CAR_{idx}",
+            label,
             draw_shadow=False,
-            color=carla.Color(r=0, g=255, b=0),  # Green labels for smart vehicles
+            color=carla.Color(*config.colors.smart_vehicle),
             life_time=0,  # Persistent label
-            persistent_lines=True
+            persistent_lines=config.simulation.debug_labels
         )
-        logging.info(f"Designated vehicle {smart_vehicle.id} as SMART_CAR_{idx}.")
+        logging.info(f"Designated vehicle {smart_vehicle.id} as {label}.")
+        vehicle_mapping[label] = {"actor": smart_vehicle, "sensors": []}  # Initialize sensors list for smart car
 
-    return ego_vehicle, smart_vehicles
-
-
-
+    return ego_vehicle, smart_vehicles, vehicle_mapping
 
 # Function to initialize Pygame
 def initialize_pygame(camera_bp):
@@ -218,46 +229,61 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
 
 # Main function
 def main():
-    client, world = initialize_carla()
-    traffic_manager = client.get_trafficmanager()
-    setup_synchronous_mode(world, traffic_manager)
+    parser = argparse.ArgumentParser(description="CARLA Simulation with Ego Vehicle Visualization")
+    parser.add_argument("--vis_ego", action="store_true", help="Visualize ego vehicle sensor data in a separate window")
+    args = parser.parse_args()
 
-    # Initialize the EnvironmentManager
-    env_manager = EnvironmentManager(world)
+    # Load configuration
+    config = load_config("utils/config/config.yaml")
+    logging.basicConfig(
+        level=config.logging.level.upper(),
+        filename=config.logging.log_file,
+        filemode="w",
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    # Initialize CARLA
+    client, world = initialize_carla()
+
+    # Setup synchronous mode
+    traffic_manager = client.get_trafficmanager()
+    setup_synchronous_mode(world, traffic_manager, config)
 
     # Cleanup existing actors
+    env_manager = EnvironmentManager(world)
     env_manager.cleanup_existing_actors()
 
-    # Filter spawn points
-    spawn_points = env_manager.filter_spawn_points(min_distance=10.0)
-
-    # Spawn vehicles with retries
-    max_vehicles = min(5, len(spawn_points))
-    vehicles = env_manager.spawn_with_retries(client, traffic_manager, spawn_points, number_of_vehicles=max_vehicles, retries=3)
+    # Spawn vehicles
+    spawn_points = env_manager.filter_spawn_points(config.simulation.min_spawn_distance)
+    vehicles = env_manager.spawn_with_retries(client, traffic_manager, spawn_points, config.simulation.num_vehicles, config.simulation.spawn_retries)
     if not vehicles:
         logging.error("No vehicles were spawned. Exiting simulation.")
         return
 
     # Designate ego and smart vehicles
-    ego_vehicle, smart_vehicles = designate_ego_and_smart_vehicles(vehicles, world)
+    ego_vehicle, smart_vehicles, vehicle_mapping = designate_ego_and_smart_vehicles(vehicles, world, config)
 
-    # Attach camera to ego vehicle
+    # Attach sensors to ego vehicle
+    sensors_class = Sensors()
+    sensor_suite = sensors_class.sensor_suite()
+    ego_vehicle_sensors = attach_sensor_suite(world, ego_vehicle, sensor_suite)
+    vehicle_mapping["EGO"]["sensors"] = ego_vehicle_sensors
+
+    if args.vis_ego:
+        logging.info("Launching ego vehicle sensor visualization.")
+        visualize_ego_sensors(world, ego_vehicle_sensors)
+        return  # Exit after visualization loop
+
+    # Continue with the original simulation loop
     camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
     camera, camera_bp = attach_camera(world, ego_vehicle, camera_transform)
-
-    # Initialize Pygame
     game_display, image_w, image_h = initialize_pygame(camera_bp)
-
-    # Create render and control objects
     render_object = RenderObject(image_w, image_h)
     control_object = ControlObject(ego_vehicle)
-    logging.info(f"ControlObject initialized with vehicle: {control_object.vehicle}")
 
-    # Start the camera
     camera.listen(lambda image: pygame_callback(image, render_object))
 
     try:
-        # Start the game loop
         game_loop(world, game_display, camera, render_object, control_object, vehicles, camera_transform)
     finally:
         cleanup(client, vehicles, [])

@@ -25,6 +25,14 @@ cd /path/to/Collaborative-Vehicle-2-Vehicle-System.git
 python3 main.py
 ```
 
+---
+
+### To visualize the ego_vehicle sensor data
+
+```bash
+python3 main.py --vis_ego
+```
+
 ## To-Do
 
 - [x] Task: Launch carla with multiple vehicles [1 ego-vehicle, 4 smart vehicles with the same sensor suite, press tab to shift between vehicles]

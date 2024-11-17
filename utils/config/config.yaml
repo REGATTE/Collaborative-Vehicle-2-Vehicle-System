@@ -1,0 +1,20 @@
+simulation:
+  num_vehicles: 5  # Number of vehicles to spawn
+  spawn_retries: 3  # Number of retries for spawning vehicles
+  min_spawn_distance: 10.0  # Minimum distance between spawn points
+  synchronous_mode: true  # Enable synchronous mode
+  fixed_delta_seconds: 0.05  # Time step for the simulation
+  debug_labels: true  # Enable debug labels
+  spectator_camera_offset:
+    x: 0
+    y: 0
+    z: 20  # Position spectator camera above the ego vehicle
+    pitch: -90
+
+colors:
+  ego_vehicle: [255, 0, 0]  # Red for ego vehicle
+  smart_vehicle: [0, 255, 0]  # Green for smart vehicles
+
+logging:
+  level: info  # Logging level (info, warning, error)
+  log_file: "simulation.log"  # Log output file
