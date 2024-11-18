@@ -7,7 +7,7 @@ import argparse
 
 from agents.controller import ControlObject
 from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, cleanup
-from Simulation.sensors import Sensors  # For managing sensor attachments
+from Simulation.sensors import Sensors
 from agents.EnvironmentManager import EnvironmentManager
 from agents.visualize_ego import visualize_ego_sensors
 from utils.config.config_loader import load_config
