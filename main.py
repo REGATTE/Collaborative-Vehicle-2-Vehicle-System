@@ -118,7 +118,7 @@ def attach_camera(world, vehicle, camera_transform):
 
         # Spawn the camera sensor
         camera = world.spawn_actor(camera_bp, camera_transform, attach_to=vehicle)
-        logging.info(f"Camera attached to Vehicle ID: {vehicle.id}")
+        logging.info(f"Car following camera attached to Vehicle ID: {vehicle.id}")
         return camera
     except Exception as e:
         logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
