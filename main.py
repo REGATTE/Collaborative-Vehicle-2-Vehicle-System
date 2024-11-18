@@ -11,6 +11,7 @@ from Simulation.sensors import Sensors  # For managing sensor attachments
 from agents.EnvironmentManager import EnvironmentManager
 from agents.visualize_ego import visualize_ego_sensors
 from utils.config.config_loader import load_config
+from utils.logging_config import configure_logging
 
 
 def initialize_carla():
@@ -57,42 +58,6 @@ class RenderObject:
         init_image = np.random.randint(0, 255, (height, width, 3), dtype='uint8')
         self.surface = pygame.surfarray.make_surface(init_image.swapaxes(0, 1))
 
-def attach_sensor_suite(world, vehicle, sensor_suite):
-    """
-    Attaches a suite of sensors to a vehicle in the CARLA world.
-    :param world: The CARLA world object.
-    :param vehicle: The vehicle to which sensors are attached.
-    :param sensor_suite: List of sensor specifications.
-    :return: List of spawned sensor actors.
-    """
-    sensors = []
-    for sensor_spec in sensor_suite:
-        # Set up sensor blueprint and transform
-        sensor_bp = world.get_blueprint_library().find(sensor_spec['type'])
-        transform = carla.Transform(
-            carla.Location(
-                x=sensor_spec.get('x', 0.0),
-                y=sensor_spec.get('y', 0.0),
-                z=sensor_spec.get('z', 0.0)
-            ),
-            carla.Rotation(
-                pitch=sensor_spec.get('pitch', 0.0),
-                yaw=sensor_spec.get('yaw', 0.0),
-                roll=sensor_spec.get('roll', 0.0)
-            )
-        )
-        # Spawn the sensor
-        sensor = world.spawn_actor(sensor_bp, transform, attach_to=vehicle)
-
-        # Set additional attributes if specified
-        for key, value in sensor_spec.items():
-            if sensor_bp.has_attribute(key):
-                sensor_bp.set_attribute(key, str(value))
-
-        sensors.append(sensor)
-        logging.info(f"Attached sensor {sensor_spec['type']} to vehicle {vehicle.id}.")
-    return sensors
-
 
 def initialize_pygame(camera_bp, num_labels, fixed_resolution=(1920, 1080)):
     """
@@ -136,32 +101,58 @@ def pygame_callback(image, render_object):
         logging.error(f"Error in pygame_callback: {e}")
 
 
-def attach_camera(world, ego_vehicle, camera_transform):
+def attach_camera(world, vehicle, camera_transform):
     """
-    Attaches a camera to the ego vehicle.
-    :param world: The CARLA world object.
-    :param ego_vehicle: The ego vehicle actor.
-    :param camera_transform: Transform to position the camera relative to the vehicle.
-    :return: The spawned camera actor and its blueprint.
+    Attaches a camera sensor to a vehicle with a specified transform.
+    :param world: CARLA world object.
+    :param vehicle: CARLA vehicle actor to attach the camera to.
+    :param camera_transform: Transform object specifying the camera's position and orientation.
+    :return: The attached camera actor.
     """
-    camera_bp = world.get_blueprint_library().find('sensor.camera.rgb')
-    camera = world.spawn_actor(camera_bp, camera_transform, attach_to=ego_vehicle)
-    return camera, camera_bp
+    try:
+        blueprint_library = world.get_blueprint_library()
+        camera_bp = blueprint_library.find('sensor.camera.rgb')
+        camera_bp.set_attribute('image_size_x', '1920')
+        camera_bp.set_attribute('image_size_y', '1080')
+        camera_bp.set_attribute('fov', '110')
 
-def game_loop(world, game_display, camera, render_object, control_object, vehicles, camera_transform, vehicle_mapping, intrinsic_matrix, env_manager):
+        # Spawn the camera sensor
+        camera = world.spawn_actor(camera_bp, camera_transform, attach_to=vehicle)
+        logging.info(f"Camera attached to Vehicle ID: {vehicle.id}")
+        return camera
+    except Exception as e:
+        logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
+        return None
+
+def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager):
     """
     Main game loop for updating the CARLA world and PyGame display.
+
+    This loop handles:
+        - Rendering the PyGame window with the camera feed.
+        - Drawing the menu bar with vehicle IDs.
+        - Switching vehicles using the TAB key.
+        - Processing user input for vehicle control.
+
+    :param world: CARLA world object.
+    :param game_display: PyGame display surface.
+    :param camera: Camera actor attached to a vehicle.
+    :param render_object: RenderObject for rendering the camera feed.
+    :param control_object: ControlObject for handling vehicle control inputs.
+    :param vehicle_mapping: Dictionary mapping vehicle labels to their actors and sensors.
+    :param env_manager: EnvironmentManager for drawing vehicle labels.
     """
     crashed = False
     font = pygame.font.SysFont('Arial', 16)
     menu_bar_height = 30
     width, height = game_display.get_size()
 
-    # List of vehicle labels
+    # List of vehicle labels for toggling
     vehicle_keys = list(vehicle_mapping.keys())
     current_vehicle_index = 0
     active_vehicle_label = vehicle_keys[current_vehicle_index]
 
+    logging.info("Entering the main simulation loop.")
     while not crashed:
         world.tick()  # Advance simulation by one tick
         game_display.fill((0, 0, 0))  # Clear the screen
@@ -192,7 +183,8 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
                     if camera.is_listening:
                         camera.stop()
                     camera.destroy()
-                    camera, camera_bp = attach_camera(world, new_vehicle, camera_transform)
+                    camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
+                    camera = attach_camera(world, new_vehicle, camera_transform)
                     camera.listen(lambda image: pygame_callback(image, render_object))
 
     if camera.is_listening:
@@ -202,69 +194,78 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
 
 def main():
     """
-    Main function to initialize the CARLA simulation and run the game loop.
+    Entry point for the CARLA simulation.
+
+    Features:
+        - Initializes CARLA client and server connection.
+        - Configures synchronous mode for deterministic simulation.
+        - Spawns vehicles and designates an ego vehicle and smart vehicles.
+        - Attaches sensors to all vehicles and logs their IDs.
+        - Provides interactive visualization and control via PyGame.
     """
-    parser = argparse.ArgumentParser(description="CARLA Simulation with Ego Vehicle Visualization")
-    parser.add_argument("--vis_ego", action="store_true", help="Visualize ego vehicle sensor data in a separate window")
+    configure_logging()
+    logging.info("Starting CARLA simulation...")
+
+    parser = argparse.ArgumentParser(description="CARLA Simulation with Sensor Data Association")
+    parser.add_argument("--vis_ego", action="store_true", help="Visualize ego vehicle sensors")
+    parser.add_argument("--vis_smart", action="store_true", help="Visualize smart vehicle sensors with toggling")
     args = parser.parse_args()
 
-    pygame.init()
-
+    # Load configuration file
     config = load_config("utils/config/config.yaml")
-    logging.basicConfig(
-        level=config.logging.level.upper(),
-        filename=config.logging.log_file,
-        filemode="w",
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
 
+    # Initialize CARLA client and world
     client, world = initialize_carla()
     traffic_manager = client.get_trafficmanager()
     setup_synchronous_mode(world, traffic_manager, config)
 
+    # Clean up any pre-existing actors
     env_manager = EnvironmentManager(world)
     env_manager.cleanup_existing_actors()
 
-    spawn_points = env_manager.filter_spawn_points(config.simulation.min_spawn_distance)
-    vehicles = env_manager.spawn_with_retries(client, traffic_manager, spawn_points, config.simulation.num_vehicles, config.simulation.spawn_retries)
+    # Spawn vehicles and assign IDs
+    logging.info(f"Attempting to spawn {config.simulation.num_vehicles} vehicles.")
+    vehicles = env_manager.spawn_with_retries(
+        client, traffic_manager, config.simulation.num_vehicles, config.simulation.spawn_retries
+    )
+    if len(vehicles) < config.simulation.num_vehicles:
+        logging.warning("Not all vehicles could be spawned. Check spawn points or increase retries.")
+    logging.info(f"Successfully spawned {len(vehicles)} vehicles.")
 
-    if not vehicles:
-        logging.error("No vehicles were spawned. Exiting simulation.")
-        return
-
+    # Designate ego and smart vehicles
     ego_vehicle, smart_vehicles, vehicle_mapping = env_manager.designate_ego_and_smart_vehicles(vehicles, world, config)
 
-    sensors_class = Sensors()
-    sensor_suite = sensors_class.sensor_suite()
-    ego_vehicle_sensors = attach_sensor_suite(world, ego_vehicle, sensor_suite)
+    # Attach sensors to all vehicles
+    sensors = Sensors()
+    ego_vehicle_sensors = sensors.attach_sensor_suite(world, ego_vehicle, "ego_veh")
+    logging.info(f"Ego vehicle (ID: {ego_vehicle.id}) has {len(ego_vehicle_sensors)} sensors attached.")
+
+    for idx, smart_vehicle in enumerate(smart_vehicles, start=1):
+        vehicle_label = f"smart_veh_{idx}"
+        smart_sensors = sensors.attach_sensor_suite(world, smart_vehicle, vehicle_label)
+        vehicle_mapping[vehicle_label]["sensors"] = smart_sensors
+        logging.info(f"{vehicle_label} (ID: {smart_vehicle.id}) has {len(smart_sensors)} sensors attached.")
     vehicle_mapping["ego_veh"]["sensors"] = ego_vehicle_sensors
 
-    # If the --vis_ego flag is set, visualize the ego vehicle's sensors
+    # Visualization options
     if args.vis_ego:
-        logging.info("Visualizing ego vehicle sensors...")
         visualize_ego_sensors(world, ego_vehicle_sensors)
-        return  # Exit after visualizing
+        return
 
-    # Attach camera to the ego vehicle
+    # Attach a camera to the ego vehicle for interactive visualization
     camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
-    camera, camera_bp = attach_camera(world, ego_vehicle, camera_transform)
-
-    # Initialize PyGame with fixed resolution
-    game_display, window_width, window_height = initialize_pygame(camera_bp, len(vehicle_mapping), fixed_resolution=(1920, 1080))
-
-    intrinsic_matrix = env_manager.get_camera_intrinsic(camera_bp, window_width, window_height - 30)  # Adjust for menu bar
-    render_object = RenderObject(window_width, window_height - 30)  # Adjust for menu bar
+    camera = attach_camera(world, ego_vehicle, camera_transform)
+    game_display, width, height = initialize_pygame(None, len(vehicle_mapping), fixed_resolution=(1920, 1080))
+    render_object = RenderObject(width, height - 30)
     control_object = ControlObject(ego_vehicle)
 
+    # Start listening to the camera
     camera.listen(lambda image: pygame_callback(image, render_object))
-
     try:
-        game_loop(world, game_display, camera, render_object, control_object, vehicles, camera_transform, vehicle_mapping, intrinsic_matrix, env_manager)
+        game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager)
     finally:
-        pygame.quit()
-        cleanup(client, vehicles, [])
-        logging.info("Simulation ended. Cleaned up all resources.")
-
+        pygame.quit()  # Close the PyGame window
+        cleanup(client, vehicles, [])  # Clean up actors
 
 if __name__ == "__main__":
     main()

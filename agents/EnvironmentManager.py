@@ -34,109 +34,102 @@ class EnvironmentManager:
 
         logging.info(f"Cleaned up {len(vehicles)} vehicles and {len(pedestrians)} pedestrians.")
 
-    def filter_spawn_points(self, min_distance=10.0):
-        """
-        Filters spawn points to ensure a minimum distance between them.
-        :param min_distance: Minimum distance between spawn points in meters.
-        :return: List of filtered spawn points.
-        """
-        spawn_points = self.world.get_map().get_spawn_points()
-        filtered_spawn_points = []
-        for sp in spawn_points:
-            if all(sp.location.distance(other.location) > min_distance for other in filtered_spawn_points):
-                filtered_spawn_points.append(sp)
-
-        # Visualize spawn points
-        for idx, sp in enumerate(filtered_spawn_points):
-            self.world.debug.draw_string(sp.location, f"{idx}", draw_shadow=False,
-                                         color=carla.Color(r=0, g=255, b=0), life_time=10.0)
-        logging.info(f"Filtered {len(filtered_spawn_points)} valid spawn points.")
-        return filtered_spawn_points
-
-    def spawn_with_retries(self, client, traffic_manager, spawn_points, number_of_vehicles, retries=3):
-        """
-        Attempt to spawn vehicles with retries in case of failure.
-        :param client: The CARLA client instance.
-        :param traffic_manager: The CARLA traffic manager instance.
-        :param spawn_points: List of valid spawn points.
-        :param number_of_vehicles: Number of vehicles to spawn.
-        :param retries: Number of retry attempts in case of failure.
-        :return: List of spawned vehicle IDs.
-        """
-        attempt = 0
-        vehicles = []
-
-        while attempt < retries and not vehicles:
-            logging.info(f"Spawn attempt {attempt + 1}/{retries}...")
-            vehicles = spawn_vehicles(client, self.world, traffic_manager, number_of_vehicles=number_of_vehicles)
-
-            if vehicles:
-                logging.info(f"Successfully spawned {len(vehicles)} vehicles.")
-            else:
-                logging.warning("Spawn failed. Retrying...")
+    def filter_spawn_points(self, min_distance=10.0, visualize=True, life_time=10.0):
+        try:
+            spawn_points = self.world.get_map().get_spawn_points()
+            logging.debug(f"Retrieved {len(spawn_points)} spawn points from the map.")
             
-            attempt += 1
+            filtered_spawn_points = []
+            for sp in spawn_points:
+                if all(sp.location.distance(other.location) > min_distance for other in filtered_spawn_points):
+                    filtered_spawn_points.append(sp)
 
-        if not vehicles:
-            logging.error("Failed to spawn any vehicles after retries.")
+            if visualize:
+                for idx, sp in enumerate(filtered_spawn_points):
+                    self.world.debug.draw_string(
+                        sp.location, f"{idx}",
+                        draw_shadow=False,
+                        color=carla.Color(r=0, g=255, b=0),
+                        life_time=life_time
+                    )
+                logging.info(f"Visualized {len(filtered_spawn_points)} filtered spawn points.")
 
-        return vehicles
+            return filtered_spawn_points
+        except Exception as e:
+            logging.error(f"Error filtering spawn points: {e}", exc_info=True)
+            return []
+
+    def spawn_with_retries(self, client, traffic_manager, num_vehicles, spawn_retries):
+        """
+        Attempts to spawn the specified number of vehicles with retries.
+        :param client: CARLA client instance.
+        :param traffic_manager: Traffic manager instance.
+        :param num_vehicles: Total number of vehicles to spawn.
+        :param spawn_retries: Number of retry attempts for spawning.
+        :return: List of successfully spawned vehicles.
+        """
+        logging.info(f"Starting to spawn {num_vehicles} vehicles with up to {spawn_retries} retries.")
+        spawn_points = self.filter_spawn_points()
+        logging.info(f"Found {len(spawn_points)} filtered spawn points.")
+
+        spawned_vehicles = []
+        for attempt in range(spawn_retries):
+            logging.info(f"Spawn attempt {attempt + 1}/{spawn_retries}...")
+            for sp in spawn_points[:num_vehicles - len(spawned_vehicles)]:
+                try:
+                    vehicle_bp = random.choice(self.world.get_blueprint_library().filter('vehicle.*'))
+                    vehicle = self.world.try_spawn_actor(vehicle_bp, sp)
+                    if vehicle:
+                        vehicle.set_autopilot(True, traffic_manager.get_port())
+                        spawned_vehicles.append(vehicle)
+                        logging.info(f"Spawned vehicle (ID: {vehicle.id}) at location {sp.location}.")
+                except Exception as e:
+                    logging.error(f"Failed to spawn a vehicle at {sp.location}: {e}")
+
+            if len(spawned_vehicles) >= num_vehicles:
+                logging.info("All vehicles successfully spawned.")
+                break
+
+        if len(spawned_vehicles) < num_vehicles:
+            logging.warning(f"Only {len(spawned_vehicles)} out of {num_vehicles} vehicles were spawned.")
+        return spawned_vehicles
 
 
-    
     def designate_ego_and_smart_vehicles(self, vehicles, world, config):
         """
         Designates one vehicle as the ego vehicle and the rest as smart vehicles.
-        Adds labels to each vehicle in the simulation with increased height for better visibility.
-        Maintains a mapping of vehicle IDs to their actors and sensors.
-        Prints the mapping of roles to vehicle IDs.
+        :param vehicles: List of vehicle IDs spawned in the simulation.
+        :param world: CARLA world object.
+        :param config: Configuration object for simulation.
+        :return: (ego_vehicle, smart_vehicles, vehicle_mapping)
         """
         vehicle_mapping = {}
 
-        # Select and label the ego vehicle
-        ego_vehicle_id = random.choice(vehicles)
+        # Extract actor IDs if the vehicles list contains Vehicle objects
+        vehicle_ids = [vehicle.id if hasattr(vehicle, 'id') else vehicle for vehicle in vehicles]
+
+        # Randomly select one vehicle as the ego vehicle
+        ego_vehicle_id = random.choice(vehicle_ids)
         ego_vehicle = world.get_actor(ego_vehicle_id)
-        logging.info(f"Designated vehicle {ego_vehicle.id} as ego_veh.")
-
-        # Add label for the ego vehicle
-        ego_location = ego_vehicle.get_transform().location
-        ego_location.z += 3.0  # Raise the label above the vehicle
-        world.debug.draw_string(
-            ego_location,
-            "ego_veh",
-            draw_shadow=False,
-            color=carla.Color(*config.colors.ego_vehicle),
-            life_time=0,  # Persistent label
-            persistent_lines=config.simulation.debug_labels
-        )
         vehicle_mapping["ego_veh"] = {"actor": ego_vehicle, "sensors": []}
+        logging.info(f"Designated vehicle {ego_vehicle_id} as ego_veh.")
 
-        # Print the ID of the ego vehicle
-        print(f"ego_veh: Vehicle ID {ego_vehicle.id}")
+        # Assign remaining vehicles as smart vehicles
+        smart_vehicle_ids = [vid for vid in vehicle_ids if vid != ego_vehicle_id]
+        smart_vehicles = []
+        for idx, smart_vehicle_id in enumerate(smart_vehicle_ids, start=1):
+            smart_vehicle = world.get_actor(smart_vehicle_id)
+            vehicle_label = f"smart_veh_{idx}"
+            vehicle_mapping[vehicle_label] = {"actor": smart_vehicle, "sensors": []}
+            smart_vehicles.append(smart_vehicle)
+            logging.info(f"Designated vehicle {smart_vehicle_id} as {vehicle_label}.")
 
-        # Select and label the smart vehicles
-        smart_vehicle_ids = [vid for vid in vehicles if vid != ego_vehicle_id]
-        smart_vehicles = [world.get_actor(vid) for vid in smart_vehicle_ids]
-
-        for idx, smart_vehicle in enumerate(smart_vehicles, start=1):
-            smart_location = smart_vehicle.get_transform().location
-            smart_location.z += 3.0  # Raise the label above the vehicle
-            label = f"smart_veh_{idx}"
-            world.debug.draw_string(
-                smart_location,
-                label,
-                draw_shadow=False,
-                color=carla.Color(*config.colors.smart_vehicle),
-                life_time=0,  # Persistent label
-                persistent_lines=config.simulation.debug_labels
-            )
-            logging.info(f"Designated vehicle {smart_vehicle.id} as {label}.")
-            vehicle_mapping[label] = {"actor": smart_vehicle, "sensors": []}
-
-            # Print the ID of each smart vehicle
-            print(f"{label}: Vehicle ID {smart_vehicle.id}")
+            # Limit the number of smart vehicles to the desired count
+            if idx == config.simulation.num_smart_vehicles:
+                break
 
         return ego_vehicle, smart_vehicles, vehicle_mapping
+
 
 
     def get_camera_intrinsic(self, camera_bp, image_width, image_height):
