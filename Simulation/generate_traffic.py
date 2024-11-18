@@ -5,7 +5,17 @@ import time
 
 def setup_traffic_manager(client, port, hybrid_mode=True, respawn=False, seed=None):
     """
-    Configure the Traffic Manager with specified settings.
+    Configure and return the Traffic Manager instance.
+    
+    Args:
+        client (carla.Client): The CARLA client instance.
+        port (int): Port number for the Traffic Manager.
+        hybrid_mode (bool): Enable hybrid physics for smoother vehicle movements.
+        respawn (bool): Enable respawning of dormant vehicles.
+        seed (int, optional): Seed for randomization in Traffic Manager.
+    
+    Returns:
+        traffic_manager (carla.TrafficManager): Configured Traffic Manager instance.
     """
     traffic_manager = client.get_trafficmanager(port)
     traffic_manager.set_global_distance_to_leading_vehicle(2.5)
@@ -19,7 +29,19 @@ def setup_traffic_manager(client, port, hybrid_mode=True, respawn=False, seed=No
 
 def spawn_vehicles(client, world, traffic_manager, number_of_vehicles=10, safe_mode=True, vehicle_filter="vehicle.*", vehicle_generation="All"):
     """
-    Spawn a specified number of vehicles in the CARLA world.
+    Spawn vehicles in the simulation with specified configurations.
+    
+    Args:
+        client (carla.Client): The CARLA client instance.
+        world (carla.World): The CARLA world instance.
+        traffic_manager (carla.TrafficManager): The configured Traffic Manager.
+        number_of_vehicles (int): Number of vehicles to spawn.
+        safe_mode (bool): Spawn only cars if True.
+        vehicle_filter (str): Blueprint filter pattern for vehicles.
+        vehicle_generation (str): Vehicle generation to filter (e.g., "2" or "All").
+    
+    Returns:
+        vehicles (list): List of spawned vehicle actor IDs.
     """
     vehicle_blueprints = get_actor_blueprints(world, vehicle_filter, vehicle_generation)
     if safe_mode:
@@ -52,7 +74,19 @@ def spawn_vehicles(client, world, traffic_manager, number_of_vehicles=10, safe_m
 
 def spawn_walkers(client, world, number_of_walkers=20, walker_filter="walker.pedestrian.*", walker_generation="2", seed=None):
     """
-    Spawn a specified number of pedestrians (walkers) in the CARLA world.
+    Spawn pedestrians (walkers) in the simulation.
+    
+    Args:
+        client (carla.Client): The CARLA client instance.
+        world (carla.World): The CARLA world instance.
+        number_of_walkers (int): Number of walkers to spawn.
+        walker_filter (str): Blueprint filter pattern for walkers.
+        walker_generation (str): Walker generation to filter (e.g., "2").
+        seed (int, optional): Seed for randomization.
+    
+    Returns:
+        walkers (list): List of spawned walker actor IDs.
+        walker_speeds (list): List of assigned walking speeds.
     """
     walker_blueprints = get_actor_blueprints(world, walker_filter, walker_generation)
     spawn_points = []
@@ -84,7 +118,15 @@ def spawn_walkers(client, world, number_of_walkers=20, walker_filter="walker.ped
 
 def get_actor_blueprints(world, filter_pattern, generation):
     """
-    Get actor blueprints filtered by pattern and generation.
+    Retrieve actor blueprints filtered by type and generation.
+    
+    Args:
+        world (carla.World): The CARLA world instance.
+        filter_pattern (str): Blueprint filter pattern.
+        generation (str): Generation to filter (e.g., "2" or "All").
+    
+    Returns:
+        list: Filtered list of blueprints.
     """
     blueprints = world.get_blueprint_library().filter(filter_pattern)
     if generation.lower() == "all":
@@ -99,7 +141,12 @@ def get_actor_blueprints(world, filter_pattern, generation):
 
 def cleanup(client, vehicles, walkers):
     """
-    Clean up spawned actors by destroying vehicles and walkers.
+    Destroy all spawned actors (vehicles and walkers).
+    
+    Args:
+        client (carla.Client): The CARLA client instance.
+        vehicles (list): List of vehicle actor IDs.
+        walkers (list): List of walker actor IDs.
     """
     if vehicles:
         client.apply_batch([carla.command.DestroyActor(x) for x in vehicles])
@@ -110,7 +157,7 @@ def cleanup(client, vehicles, walkers):
 # Example integration with a script
 def main():
     """
-    Example usage of the traffic generation functions.
+    Main function demonstrating the setup and cleanup of traffic simulation.
     """
     client = carla.Client('localhost', 2000)
     client.set_timeout(10.0)

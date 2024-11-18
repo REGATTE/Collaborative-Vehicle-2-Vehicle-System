@@ -48,6 +48,13 @@ class Sensors:
             return None
 
     def attach_lidar(self, world, vehicle, label):
+        """
+        Attaches a LiDAR sensor to the vehicle. 
+        :param world: The CARLA world object.
+        :param vehicle: The CARLA vehicle actor.
+        :param label: The CARLA vehicle label.
+        :return: The LiDAR sensor actor.
+        """
         try:
             blueprint_library = world.get_blueprint_library()
             lidar_bp = blueprint_library.find('sensor.lidar.ray_cast')
