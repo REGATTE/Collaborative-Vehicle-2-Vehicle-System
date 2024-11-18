@@ -9,6 +9,8 @@ git clone https://github.com/REGATTE/Collaborative-Vehicle-2-Vehicle-System.git
 
 ## Simulation
 
+If you need to install carla, follow these steps - [Install Carla](docs/installation.md)
+
 In the first terminal
 
 ```bash
