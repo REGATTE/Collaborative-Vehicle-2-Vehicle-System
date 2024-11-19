@@ -21,8 +21,15 @@ source {carla_env}/bin/activate
 In another terminal, with the venv activated
 
 ```bash
-cd /path/to/Collaborative-Vehicle-2-Vehicle-System.git
+cd /path/to/Collaborative-Vehicle-2-Vehicle-System
 python3 main.py
+```
+
+To visualize **ego_vehicle** data, in another terminal [with the venv activated]
+
+```bash
+cd /path/to/Collaborative-Vehicle-2-Vehicle-System/agents
+python3 visualize_ego.py
 ```
 
 ## Visual Results
