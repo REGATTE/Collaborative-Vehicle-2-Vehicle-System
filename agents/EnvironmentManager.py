@@ -130,7 +130,18 @@ class EnvironmentManager:
 
         return ego_vehicle, smart_vehicles, vehicle_mapping
 
-
+    def get_ego_vehicle(self, vehicle_mapping):
+        """
+        Retrieves the ego vehicle from the vehicle mapping.
+        :param vehicle_mapping: A dictionary containing all vehicles and their labels.
+        :return: The ego vehicle actor if found, None otherwise.
+        """
+        ego_vehicle_label = "ego_veh"
+        if ego_vehicle_label in vehicle_mapping:
+            return vehicle_mapping[ego_vehicle_label]["actor"]
+        else:
+            logging.error("Ego vehicle not found in the vehicle mapping.")
+            return None
 
     def get_camera_intrinsic(self, camera_bp, image_width, image_height):
         """
