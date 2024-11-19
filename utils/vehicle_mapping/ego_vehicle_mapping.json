@@ -1,0 +1,52 @@
+{
+    "ego_veh": {
+        "actor_id": 25,
+        "sensors": [
+            29,
+            30,
+            31,
+            32,
+            33
+        ]
+    },
+    "smart_veh_1": {
+        "actor_id": 24,
+        "sensors": [
+            34,
+            35,
+            36,
+            37,
+            38
+        ]
+    },
+    "smart_veh_2": {
+        "actor_id": 26,
+        "sensors": [
+            39,
+            40,
+            41,
+            42,
+            43
+        ]
+    },
+    "smart_veh_3": {
+        "actor_id": 27,
+        "sensors": [
+            44,
+            45,
+            46,
+            47,
+            48
+        ]
+    },
+    "smart_veh_4": {
+        "actor_id": 28,
+        "sensors": [
+            49,
+            50,
+            51,
+            52,
+            53
+        ]
+    }
+}
