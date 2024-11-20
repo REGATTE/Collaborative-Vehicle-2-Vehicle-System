@@ -81,6 +81,7 @@ def visualize_ego_sensors(ego_vehicle_mapping):
                     array = np.frombuffer(data.raw_data, dtype=np.uint8)
                     array = array.reshape((data.height, data.width, 4))[:, :, :3]
                     array = np.rot90(array, -1)
+                    array = array[:, :, ::-1] #RGB TO BGR for display.
                     sensor_data_queue.put((sensor_type, array))
                 elif "lidar" in sensor_type.lower():
                     points = np.frombuffer(data.raw_data, dtype=np.float32).reshape(-1, 4)
@@ -153,6 +154,12 @@ def visualize_ego_sensors(ego_vehicle_mapping):
 
                     # Switch to the next sensor
                     current_sensor_index = (current_sensor_index + 1) % len(sensors)
+
+                    # CAUTION - Will break if we only have GNSS and call this
+                    while(sensors[current_sensor_index].type_id == 'sensor.other.gnss'):
+                        logging.info(f"Skipped GNSS: {sensors[current_sensor_index].type_id}")
+                        current_sensor_index = (current_sensor_index + 1) % len(sensors)
+                        
 
                     try:
                         sensors[current_sensor_index].listen(sensor_callback(sensors[current_sensor_index]))
