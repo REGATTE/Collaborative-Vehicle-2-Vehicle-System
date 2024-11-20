@@ -170,7 +170,9 @@ def main():
     env_manager = EnvironmentManager(world)
     env_manager.cleanup_existing_actors()
 
-    vehicles = env_manager.spawn_with_retries(client, traffic_manager, config.simulation.num_vehicles, config.simulation.spawn_retries)
+    vehicles = env_manager.spawn_with_retries(
+        client, traffic_manager, config.simulation.num_vehicles, config.simulation.spawn_retries, safe_mode=True
+    )
     ego_vehicle, smart_vehicles, vehicle_mapping = env_manager.designate_ego_and_smart_vehicles(vehicles, world, config)
     
     sensors = Sensors()
