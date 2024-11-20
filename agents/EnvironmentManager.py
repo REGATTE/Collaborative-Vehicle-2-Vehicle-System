@@ -59,13 +59,15 @@ class EnvironmentManager:
             logging.error(f"Error filtering spawn points: {e}", exc_info=True)
             return []
 
-    def spawn_with_retries(self, client, traffic_manager, num_vehicles, spawn_retries):
+    def spawn_with_retries(self, client, traffic_manager, num_vehicles, spawn_retries, safe_mode=True):
         """
         Attempts to spawn the specified number of vehicles with retries.
+        Filters vehicles to ensure only cars are spawned if safe_mode is enabled.
         :param client: CARLA client instance.
         :param traffic_manager: Traffic manager instance.
         :param num_vehicles: Total number of vehicles to spawn.
         :param spawn_retries: Number of retry attempts for spawning.
+        :param safe_mode: Ensure only cars are spawned if True.
         :return: List of successfully spawned vehicles.
         """
         logging.info(f"Starting to spawn {num_vehicles} vehicles with up to {spawn_retries} retries.")
@@ -77,7 +79,11 @@ class EnvironmentManager:
             logging.info(f"Spawn attempt {attempt + 1}/{spawn_retries}...")
             for sp in spawn_points[:num_vehicles - len(spawned_vehicles)]:
                 try:
-                    vehicle_bp = random.choice(self.world.get_blueprint_library().filter('vehicle.*'))
+                    # Use filtering logic to ensure only cars are spawned
+                    vehicle_bp = random.choice(
+                        [bp for bp in self.world.get_blueprint_library().filter('vehicle.*') 
+                        if not safe_mode or (bp.has_attribute('base_type') and bp.get_attribute('base_type').as_str() == 'car')]
+                    )
                     vehicle = self.world.try_spawn_actor(vehicle_bp, sp)
                     if vehicle:
                         vehicle.set_autopilot(True, traffic_manager.get_port())
@@ -93,6 +99,7 @@ class EnvironmentManager:
         if len(spawned_vehicles) < num_vehicles:
             logging.warning(f"Only {len(spawned_vehicles)} out of {num_vehicles} vehicles were spawned.")
         return spawned_vehicles
+
 
 
     def designate_ego_and_smart_vehicles(self, vehicles, world, config):

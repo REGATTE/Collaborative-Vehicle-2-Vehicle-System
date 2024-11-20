@@ -1,52 +1,52 @@
 {
     "ego_veh": {
-        "actor_id": 56,
+        "actor_id": 77,
         "sensors": [
-            60,
-            61,
-            62,
-            63,
-            64
-        ]
-    },
-    "smart_veh_1": {
-        "actor_id": 55,
-        "sensors": [
-            65,
-            66,
-            67,
-            68,
-            69
-        ]
-    },
-    "smart_veh_2": {
-        "actor_id": 57,
-        "sensors": [
-            70,
-            71,
-            72,
-            73,
-            74
-        ]
-    },
-    "smart_veh_3": {
-        "actor_id": 58,
-        "sensors": [
-            75,
-            76,
-            77,
-            78,
-            79
-        ]
-    },
-    "smart_veh_4": {
-        "actor_id": 59,
-        "sensors": [
+            79,
             80,
             81,
             82,
-            83,
-            84
+            83
+        ]
+    },
+    "smart_veh_1": {
+        "actor_id": 74,
+        "sensors": [
+            84,
+            85,
+            86,
+            87,
+            88
+        ]
+    },
+    "smart_veh_2": {
+        "actor_id": 75,
+        "sensors": [
+            89,
+            90,
+            91,
+            92,
+            93
+        ]
+    },
+    "smart_veh_3": {
+        "actor_id": 76,
+        "sensors": [
+            94,
+            95,
+            96,
+            97,
+            98
+        ]
+    },
+    "smart_veh_4": {
+        "actor_id": 78,
+        "sensors": [
+            99,
+            100,
+            101,
+            102,
+            103
         ]
     }
 }

@@ -30,23 +30,26 @@ def setup_traffic_manager(client, port, hybrid_mode=True, respawn=False, seed=No
 def spawn_vehicles(client, world, traffic_manager, number_of_vehicles=10, safe_mode=True, vehicle_filter="vehicle.*", vehicle_generation="All"):
     """
     Spawn vehicles in the simulation with specified configurations.
-    
-    Args:
-        client (carla.Client): The CARLA client instance.
-        world (carla.World): The CARLA world instance.
-        traffic_manager (carla.TrafficManager): The configured Traffic Manager.
-        number_of_vehicles (int): Number of vehicles to spawn.
-        safe_mode (bool): Spawn only cars if True.
-        vehicle_filter (str): Blueprint filter pattern for vehicles.
-        vehicle_generation (str): Vehicle generation to filter (e.g., "2" or "All").
-    
-    Returns:
-        vehicles (list): List of spawned vehicle actor IDs.
+    Ensures only cars are spawned if safe_mode is True.
     """
     vehicle_blueprints = get_actor_blueprints(world, vehicle_filter, vehicle_generation)
-    if safe_mode:
-        vehicle_blueprints = [bp for bp in vehicle_blueprints if bp.get_attribute('base_type') == 'car']
 
+    logging.info("Available vehicle blueprints before filtering:")
+    for bp in vehicle_blueprints:
+        logging.info(f"Blueprint ID: {bp.id}, Base Type: {bp.get_attribute('base_type').as_str() if bp.has_attribute('base_type') else 'N/A'}")
+
+    
+    # Ensure only cars are considered
+    if safe_mode:
+        vehicle_blueprints = [
+                bp for bp in vehicle_blueprints if bp.has_attribute('base_type') and bp.get_attribute('base_type').as_str() == 'car'
+            ]
+    logging.info(f"Filtered vehicle blueprints (cars only): {len(vehicle_blueprints)} found.")
+    
+    if not vehicle_blueprints:
+        logging.error("No car blueprints found! Cannot spawn vehicles.")
+        return []
+    
     spawn_points = world.get_map().get_spawn_points()
     random.shuffle(spawn_points)
     number_of_vehicles = min(number_of_vehicles, len(spawn_points))
