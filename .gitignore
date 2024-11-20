@@ -5,5 +5,11 @@
 __pycache__/
 **/__pycache__/
 
+# Ignore .pyc files
+*.pyc
+**/*.pyc
+*.cpython-37.pyc
+*.cpython-*.pyc
+
 # Ignore files
 utils/vehicle_mapping/vehicle_mapping.json
