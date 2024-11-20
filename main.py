@@ -13,6 +13,7 @@ from utils.config.config_loader import load_config
 from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
 from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping
+from utils.proximity_mapping import log_proximity_mapping
 
 class RenderObject:
     """
@@ -94,7 +95,7 @@ def attach_follow_camera(world, vehicle, camera_transform):
         logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
         return None, None
 
-def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager):
+def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, ego_vehicle, smart_vehicles):
     """
     Main game loop for updating the CARLA world and PyGame display.
     """
@@ -102,6 +103,8 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     font = pygame.font.SysFont('Arial', 16)
     menu_bar_height = 30
     width, height = game_display.get_size()
+
+    proximity_state = {}  # Initialize proximity tracking state
 
     # List of vehicle labels
     vehicle_keys = list(vehicle_mapping.keys())
@@ -118,6 +121,9 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
 
         # Render the menu bar
         env_manager.draw_vehicle_labels_menu_bar(game_display, font, vehicle_mapping, width, active_vehicle_label)
+
+        # Log proximity information
+        log_proximity_mapping(ego_vehicle, smart_vehicles, world, proximity_state)
 
         pygame.display.flip()
         control_object.process_control()
@@ -193,7 +199,7 @@ def main():
     # Start listening to the camera
     camera.listen(lambda image: pygame_callback(image, render_object))
     try:
-        game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager)
+        game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, ego_vehicle, smart_vehicles)
     finally:
         pygame.quit()  # Close the PyGame window
         cleanup(client, vehicles, [])  # Clean up actors
