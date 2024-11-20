@@ -44,9 +44,15 @@ def send_data_to_ego(ego_address, smart_vehicle_id, smart_vehicle):
     :param smart_vehicle_id: ID of the smart vehicle.
     :param smart_vehicle: Smart vehicle actor.
     """
+    location = smart_vehicle.get_transform().location
+    position = {
+        "x": location.x,
+        "y": location.y,
+        "z": location.z
+    }
     smart_data = {
         "id": smart_vehicle_id,
-        "position": vars(smart_vehicle.get_transform().location),
+        "position": position,
         "speed": smart_vehicle.get_velocity().length()
     }
 
@@ -56,7 +62,6 @@ def send_data_to_ego(ego_address, smart_vehicle_id, smart_vehicle):
             sock.sendall(json.dumps(smart_data).encode())
     except Exception as e:
         logging.error(f"Error sending data from Smart Vehicle {smart_vehicle_id} to Ego Vehicle: {e}")
-
 
 def log_proximity_and_trigger_communication(ego_vehicle, smart_vehicles, world, proximity_state):
     """

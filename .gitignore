@@ -1,3 +1,9 @@
 # Ignore Visual Studio Code settings folder
 .vscode/
+
+# Ignore __pycache__ folders recursively
+__pycache__/
 **/__pycache__/
+
+# Ignore files
+utils/vehicle_mapping/vehicle_mapping.json
