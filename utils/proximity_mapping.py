@@ -1,6 +1,8 @@
 import carla
 import logging
 import math
+import json
+import socket
 
 
 def calculate_distance(location1, location2):
@@ -16,62 +18,69 @@ def calculate_distance(location1, location2):
         (location1.z - location2.z) ** 2
     )
 
-
-def find_closest_smart_vehicle(world, ego_vehicle, smart_vehicles, radius=20.0):
+def find_vehicles_in_radius(ego_vehicle, smart_vehicles, radius=20.0):
     """
-    Find the closest smart vehicle to the ego vehicle within a given radius.
-    :param world: CARLA world object.
+    Find all smart vehicles within a given radius of the ego vehicle.
     :param ego_vehicle: Ego vehicle actor.
     :param smart_vehicles: List of smart vehicle actors.
     :param radius: Radius in meters to consider for proximity.
-    :return: The closest smart vehicle actor within the radius, or None.
+    :return: List of tuples containing smart vehicles and their distances.
     """
     ego_location = ego_vehicle.get_transform().location
-    closest_vehicle = None
-    min_distance = float('inf')
+    vehicles_in_radius = []
 
     for smart_vehicle in smart_vehicles:
         smart_location = smart_vehicle.get_transform().location
         distance = calculate_distance(ego_location, smart_location)
-        if distance < radius and distance < min_distance:
-            closest_vehicle = smart_vehicle
-            min_distance = distance
+        if distance < radius:
+            vehicles_in_radius.append((smart_vehicle.id, smart_vehicle, distance))
 
-    return closest_vehicle, min_distance
+    return vehicles_in_radius
 
-
-def log_proximity_mapping(ego_vehicle, smart_vehicles, world, proximity_state):
+def send_data_to_ego(ego_address, smart_vehicle_id, smart_vehicle):
     """
-    Logs the ID of the closest smart vehicle to the ego vehicle if within the radius.
-    Only logs when a vehicle enters the proximity radius.
+    Sends data from the smart vehicle to the ego vehicle.
+    :param ego_address: Tuple of (IP, Port) for the ego vehicle.
+    :param smart_vehicle_id: ID of the smart vehicle.
+    :param smart_vehicle: Smart vehicle actor.
+    """
+    smart_data = {
+        "id": smart_vehicle_id,
+        "position": vars(smart_vehicle.get_transform().location),
+        "speed": smart_vehicle.get_velocity().length()
+    }
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(ego_address)
+            sock.sendall(json.dumps(smart_data).encode())
+    except Exception as e:
+        logging.error(f"Error sending data from Smart Vehicle {smart_vehicle_id} to Ego Vehicle: {e}")
+
+
+def log_proximity_and_trigger_communication(ego_vehicle, smart_vehicles, world, proximity_state):
+    """
+    Logs the IDs of all smart vehicles in proximity and triggers one-way communication.
     :param ego_vehicle: Ego vehicle actor.
     :param smart_vehicles: List of smart vehicle actors.
     :param world: CARLA world object.
-    :param proximity_state: Dictionary to track which vehicles are already logged.
+    :param proximity_state: Dictionary to track logged vehicles.
     """
-    closest_vehicle, distance = find_closest_smart_vehicle(world, ego_vehicle, smart_vehicles)
-    
-    if closest_vehicle:
-        if closest_vehicle.id not in proximity_state:
-            logging.info(f"Smart Vehicle ID {closest_vehicle.id} is closest to Ego Vehicle (ID: {ego_vehicle.id}) at {distance:.2f}m.")
-            proximity_state[closest_vehicle.id] = True
-    else:
-        # Reset the state if no vehicles are within proximity
-        proximity_state.clear()
+    vehicles_in_radius = find_vehicles_in_radius(ego_vehicle, smart_vehicles)
+    ego_address = ('127.0.0.1', 65432)  # Ego Vehicle's listening address
 
+    for smart_vehicle_id, smart_vehicle, distance in vehicles_in_radius:
+        if smart_vehicle_id not in proximity_state:
+            logging.info(
+                f"Smart Vehicle ID {smart_vehicle_id} is close to Ego Vehicle (ID: {ego_vehicle.id}) "
+                f"at {distance:.2f}m."
+            )
+            proximity_state[smart_vehicle_id] = True
+            # Smart vehicle sends its data to the ego vehicle
+            send_data_to_ego(ego_address, smart_vehicle_id, smart_vehicle)
 
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    logging.info("Starting Proximity Mapping...")
-
-    # Assume `world`, `ego_vehicle`, and `smart_vehicles` are initialized through the main environment setup.
-    # Replace the following placeholders with actual references if running standalone.
-    world = None  # Replace with initialized CARLA world
-    ego_vehicle = None  # Replace with ego vehicle actor
-    smart_vehicles = []  # Replace with list of smart vehicle actors
-
-    if world and ego_vehicle and smart_vehicles:
-        log_proximity_mapping(ego_vehicle, smart_vehicles, world)
-    else:
-        logging.error("World, Ego Vehicle, or Smart Vehicles not initialized.")
+    # Remove vehicles that have moved out of radius
+    proximity_state = {
+        vid: state for vid, state in proximity_state.items()
+        if vid in [v_id for v_id, _, _ in vehicles_in_radius]
+    }

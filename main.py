@@ -4,16 +4,18 @@ import pygame
 import numpy as np
 import logging
 import argparse
+import threading
 
 from agents.controller import ControlObject
 from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, cleanup
 from Simulation.sensors import Sensors
+from Simulation.ego_vehicle import start_ego_listener
 from agents.EnvironmentManager import EnvironmentManager
 from utils.config.config_loader import load_config
 from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
 from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping
-from utils.proximity_mapping import log_proximity_mapping
+from utils.proximity_mapping import log_proximity_and_trigger_communication
 
 class RenderObject:
     """
@@ -123,7 +125,7 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
         env_manager.draw_vehicle_labels_menu_bar(game_display, font, vehicle_mapping, width, active_vehicle_label)
 
         # Log proximity information
-        log_proximity_mapping(ego_vehicle, smart_vehicles, world, proximity_state)
+        log_proximity_and_trigger_communication(ego_vehicle, smart_vehicles, world, proximity_state)
 
         pygame.display.flip()
         control_object.process_control()
@@ -183,6 +185,10 @@ def main():
         vehicle_mapping[vehicle_label]["sensors"] = smart_sensors
         logging.info(f"{vehicle_label} has {len(smart_sensors)} sensors attached.")
     vehicle_mapping["ego_veh"]["sensors"] = ego_vehicle_sensors
+
+    # start ego listener in seperate thread
+    ego_listener_thread = threading.Thread(target=start_ego_listener, daemon=True)
+    ego_listener_thread.start()
 
     #save mapping to a json file
     save_vehicle_mapping(vehicle_mapping)
