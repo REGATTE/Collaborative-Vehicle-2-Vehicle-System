@@ -2,7 +2,7 @@ import json
 import logging
 import os
 
-MAPPING_FILE_PATH = "utils/vehicle_mapping/ego_vehicle_mapping.json"
+MAPPING_FILE_PATH = "utils/vehicle_mapping/vehicle_mapping.json"
 
 def save_vehicle_mapping(vehicle_mapping):
     """

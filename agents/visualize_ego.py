@@ -187,7 +187,7 @@ if __name__ == "__main__":
     logging.info("Launching Ego Vehicle Visualizer...")
 
     try:
-        ego_vehicle_mapping = load_vehicle_mapping("../utils/vehicle_mapping/ego_vehicle_mapping.json")
+        ego_vehicle_mapping = load_vehicle_mapping("../utils/vehicle_mapping/vehicle_mapping.json")
         if ego_vehicle_mapping and "ego_veh" in ego_vehicle_mapping:
             visualize_ego_sensors(ego_vehicle_mapping)
         else:
