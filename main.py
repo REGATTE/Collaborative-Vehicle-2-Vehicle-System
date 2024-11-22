@@ -8,7 +8,7 @@ import threading
 import time
 
 from agents.controller import ControlObject
-from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, cleanup
+from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, spawn_walkers, cleanup
 from Simulation.sensors import Sensors
 from Simulation.ego_vehicle import EgoVehicleListener
 from agents.EnvironmentManager import EnvironmentManager
@@ -252,6 +252,16 @@ def main():
 
     # Save vehicle mapping to a JSON file
     save_vehicle_mapping(vehicle_mapping)
+
+    #Spawn NPC vehicles and walkers
+    traffic_manager.set_global_distance_to_leading_vehicle(config.simulation.npc_global_dist_lv)
+    traffic_manager.set_hybrid_physics_mode(True)#Only works if we have vehicle tagged with role_name = 'hero'
+    traffic_manager.set_hybrid_physics_radius(70.0)#Need previous one to work first
+    traffic_manager.set_respawn_dormant_vehicles(False)
+
+    npc_vehicles = spawn_vehicles(client,world,traffic_manager, config.simulation.npc_num_vehicles)
+    npc_walkers,npc_walker_speeds = spawn_walkers(client,world, config.simulation.npc_num_walkers)
+    logging.info(f"Spawned {len(npc_vehicles)} NPC vehicles and {len(npc_walkers)} walkers.")
 
     # Attach a camera for visualization
     camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))

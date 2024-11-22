@@ -42,6 +42,10 @@ python3 visualize_ego.py
 
 All the vehicles are autonomous and do not follow a custom path waypoint. 
 
+## Errors 
+
+we have compiled all the errors that we have faced, and how to fix them. The instructions can be found [here](docs/CarlaErrors.md)
+
 ## License
 
 This project is licensed under the [Apache License](LICENSE).
