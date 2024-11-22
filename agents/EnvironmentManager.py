@@ -34,11 +34,15 @@ class EnvironmentManager:
 
         logging.info(f"Cleaned up {len(vehicles)} vehicles and {len(pedestrians)} pedestrians.")
 
-    def filter_spawn_points(self, min_distance=10.0, visualize=True, life_time=10.0):
+    def filter_spawn_points(self, min_distance=20.0, visualize=True, life_time=10.0):
+        """
+        Filters spawn points to ensure minimum distance between vehicles.
+        :param min_distance: Minimum distance between spawn points.
+        :param visualize: Whether to visualize spawn points in the CARLA world.
+        :param life_time: Lifetime for the visualized spawn points.
+        """
         try:
             spawn_points = self.world.get_map().get_spawn_points()
-            logging.debug(f"Retrieved {len(spawn_points)} spawn points from the map.")
-            
             filtered_spawn_points = []
             for sp in spawn_points:
                 if all(sp.location.distance(other.location) > min_distance for other in filtered_spawn_points):
@@ -52,8 +56,6 @@ class EnvironmentManager:
                         color=carla.Color(r=0, g=255, b=0),
                         life_time=life_time
                     )
-                logging.info(f"Visualized {len(filtered_spawn_points)} filtered spawn points.")
-
             return filtered_spawn_points
         except Exception as e:
             logging.error(f"Error filtering spawn points: {e}", exc_info=True)
@@ -69,22 +71,41 @@ class EnvironmentManager:
         :return: List of successfully spawned vehicles.
         """
         logging.info(f"Starting to spawn {num_vehicles} vehicles with up to {spawn_retries} retries.")
+
+        # Retrieve and log spawn points
         spawn_points = self.filter_spawn_points()
+        if not spawn_points:
+            logging.error("No spawn points available. Cannot spawn vehicles.")
+            return []
+
         logging.info(f"Found {len(spawn_points)} filtered spawn points.")
+
+        # Retrieve and log vehicle blueprints
+        blueprints = self.world.get_blueprint_library().filter('vehicle.*')
+        if not blueprints:
+            logging.error("No vehicle blueprints available. Cannot spawn vehicles.")
+            return []
+
+        logging.info(f"Retrieved {len(blueprints)} vehicle blueprints.")
 
         spawned_vehicles = []
         for attempt in range(spawn_retries):
             logging.info(f"Spawn attempt {attempt + 1}/{spawn_retries}...")
-            for sp in spawn_points[:num_vehicles - len(spawned_vehicles)]:
+            for sp in spawn_points:
+                if len(spawned_vehicles) >= num_vehicles:
+                    break
+
                 try:
-                    vehicle_bp = random.choice(self.world.get_blueprint_library().filter('vehicle.*'))
+                    vehicle_bp = random.choice(blueprints)
                     vehicle = self.world.try_spawn_actor(vehicle_bp, sp)
                     if vehicle:
                         vehicle.set_autopilot(True, traffic_manager.get_port())
                         spawned_vehicles.append(vehicle)
-                        logging.info(f"Spawned vehicle (ID: {vehicle.id}) at location {sp.location}.")
+                        logging.info(f"Successfully spawned vehicle (ID: {vehicle.id}) at location {sp.location}.")
+                    else:
+                        logging.warning(f"Failed to spawn vehicle at {sp.location}.")
                 except Exception as e:
-                    logging.error(f"Failed to spawn a vehicle at {sp.location}: {e}")
+                    logging.error(f"Error during vehicle spawn at {sp.location}: {e}")
 
             if len(spawned_vehicles) >= num_vehicles:
                 logging.info("All vehicles successfully spawned.")
@@ -92,12 +113,53 @@ class EnvironmentManager:
 
         if len(spawned_vehicles) < num_vehicles:
             logging.warning(f"Only {len(spawned_vehicles)} out of {num_vehicles} vehicles were spawned.")
+
         return spawned_vehicles
 
+    def cleanup_existing_actors(self, vehicle_mapping=None):
+        """
+        Destroys all existing vehicles, pedestrians, and their attached sensors in the world.
+        Optionally cleans up sensors associated with the provided vehicle mapping.
+        :param vehicle_mapping: Optional dictionary of vehicle mappings to destroy associated sensors.
+        """
+        actors = self.world.get_actors()
+        vehicles = actors.filter('vehicle.*')
+        pedestrians = actors.filter('walker.pedestrian.*')
+        
+        # Destroy sensors associated with the vehicle mapping
+        if vehicle_mapping:
+            for label, data in vehicle_mapping.items():
+                for sensor_id in data.get("sensors", []):
+                    sensor = self.world.get_actor(sensor_id)
+                    if sensor:
+                        try:
+                            sensor.destroy()
+                            logging.info(f"Destroyed sensor ID: {sensor_id} associated with {label}.")
+                        except Exception as e:
+                            logging.error(f"Error destroying sensor ID {sensor_id}: {e}")
+
+        # Destroy vehicles
+        for vehicle in vehicles:
+            try:
+                vehicle.destroy()
+                logging.info(f"Destroyed vehicle ID: {vehicle.id}")
+            except Exception as e:
+                logging.error(f"Error destroying vehicle ID {vehicle.id}: {e}")
+
+        # Destroy pedestrians
+        for pedestrian in pedestrians:
+            try:
+                pedestrian.destroy()
+                logging.info(f"Destroyed pedestrian ID: {pedestrian.id}")
+            except Exception as e:
+                logging.error(f"Error destroying pedestrian ID {pedestrian.id}: {e}")
+
+        logging.info(f"Cleaned up {len(vehicles)} vehicles and {len(pedestrians)} pedestrians.")
 
     def designate_ego_and_smart_vehicles(self, vehicles, world, config):
         """
         Designates one vehicle as the ego vehicle and the rest as smart vehicles.
+        Includes sensors cleanup if a previous simulation was run.
         :param vehicles: List of vehicle IDs spawned in the simulation.
         :param world: CARLA world object.
         :param config: Configuration object for simulation.
@@ -111,7 +173,7 @@ class EnvironmentManager:
         # Randomly select one vehicle as the ego vehicle
         ego_vehicle_id = random.choice(vehicle_ids)
         ego_vehicle = world.get_actor(ego_vehicle_id)
-        vehicle_mapping["ego_veh"] = {"actor": ego_vehicle, "sensors": []}
+        vehicle_mapping["ego_veh"] = {"actor_id": ego_vehicle.id, "sensors": []}
         logging.info(f"Designated vehicle {ego_vehicle_id} as ego_veh.")
 
         # Assign remaining vehicles as smart vehicles
@@ -120,7 +182,7 @@ class EnvironmentManager:
         for idx, smart_vehicle_id in enumerate(smart_vehicle_ids, start=1):
             smart_vehicle = world.get_actor(smart_vehicle_id)
             vehicle_label = f"smart_veh_{idx}"
-            vehicle_mapping[vehicle_label] = {"actor": smart_vehicle, "sensors": []}
+            vehicle_mapping[vehicle_label] = {"actor_id": smart_vehicle.id, "sensors": []}
             smart_vehicles.append(smart_vehicle)
             logging.info(f"Designated vehicle {smart_vehicle_id} as {vehicle_label}.")
 
@@ -129,6 +191,7 @@ class EnvironmentManager:
                 break
 
         return ego_vehicle, smart_vehicles, vehicle_mapping
+
 
     def get_ego_vehicle(self, vehicle_mapping):
         """
@@ -184,61 +247,9 @@ class EnvironmentManager:
         for label, vehicle_data in vehicle_mapping.items():
             # Highlight the active vehicle
             color = (255, 255, 0) if label == active_vehicle_label else (255, 255, 255)  # Yellow for active, white otherwise
-            vehicle_id_text = f"{label} (ID: {vehicle_data['actor'].id})"
+
+            # Use "actor_id" instead of "actor"
+            vehicle_id_text = f"{label} (ID: {vehicle_data['actor_id']})"
             text_surface = font.render(vehicle_id_text, True, color)
             screen.blit(text_surface, (x_offset, 5))  # Render text at the top
             x_offset += spacing  # Increment x position for next label
-
-    
-    def draw_vehicle_labels(self, screen, font, camera, vehicle_mapping, intrinsic_matrix, width, height):
-        """
-        Draws labels for all vehicles (ego and smart) on the PyGame window.
-        Displays their IDs above the vehicles in the simulation.
-        """
-        def world_to_screen(world_pos, intrinsic_matrix, camera_transform):
-            """
-            Converts a 3D world position to 2D screen coordinates using the camera's intrinsic matrix.
-            """
-            # Get the relative position of the vehicle to the camera
-            camera_world_matrix = camera_transform.get_matrix()
-            camera_relative_matrix = np.linalg.inv(camera_world_matrix)
-            relative_pos = np.dot(camera_relative_matrix, np.array([world_pos.x, world_pos.y, world_pos.z, 1]))
-
-            # Ignore objects behind the camera
-            if relative_pos[2] <= 0:
-                return None
-
-            # Project 3D coordinates to 2D screen space
-            screen_pos = np.dot(intrinsic_matrix, relative_pos[:3])
-            screen_pos /= screen_pos[2]
-
-            return int(screen_pos[0]), int(screen_pos[1])
-
-        # Get the camera's transform
-        camera_transform = camera.get_transform()
-
-        for label, vehicle_data in vehicle_mapping.items():
-            vehicle = vehicle_data["actor"]
-            vehicle_pos = vehicle.get_transform().location
-            vehicle_pos.z += 2.5  # Offset the label above the vehicle for visibility
-
-            # Convert world coordinates to screen coordinates
-            screen_pos = world_to_screen(vehicle_pos, intrinsic_matrix, camera_transform)
-            if screen_pos:
-                x, y = screen_pos
-
-                # Ensure the screen position is within bounds
-                if 0 <= x < width and 0 <= y < height:
-                    # Prepare the label text (role and vehicle ID)
-                    vehicle_id_text = f"{label} (ID: {vehicle.id})"
-
-                    # Render the label on the screen
-                    try:
-                        text_surface = font.render(vehicle_id_text, True, (255, 255, 255))  # White text
-                        screen.blit(text_surface, (x, y))
-                    except Exception as e:
-                        logging.error(f"Error rendering label for {label}: {e}")
-
-
-
-

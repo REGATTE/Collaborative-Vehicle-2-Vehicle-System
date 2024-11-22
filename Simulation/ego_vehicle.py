@@ -1,19 +1,29 @@
 import socket
+import threading
 import logging
 import json
 import numpy as np
+from utils.proximity_mapping import ProximityMapping
+
 
 class EgoVehicleListener:
-    def __init__(self, host='127.0.0.1', port=65432, ego_vehicle=None):
+    def __init__(self, host='127.0.0.1', port=65432, ego_vehicle=None, world=None, vehicle_mapping=None):
         """
         Initializes the ego vehicle listener.
         :param host: Host address for the listener.
         :param port: Port for the listener.
         :param ego_vehicle: Ego vehicle actor.
+        :param world: CARLA world instance.
+        :param vehicle_mapping: Vehicle mapping dictionary.
         """
         self.host = host
         self.port = port
         self.ego_vehicle = ego_vehicle
+        self.world = world
+        self.vehicle_mapping = vehicle_mapping
+        self.lidar_data_proximity = {}  # Store LIDAR data for vehicles in proximity
+        self.proximity_mapping = ProximityMapping(world, radius=20.0)  # Use proximity mapping
+        self.running = True  # Flag to safely terminate thread
 
     def compute_relative_pose(self, smart_data):
         """
@@ -68,23 +78,68 @@ class EgoVehicleListener:
         server_socket.listen()
         logging.info(f"Ego Vehicle listening on {self.host}:{self.port}")
 
-        while True:
+        while self.running:
             conn, addr = server_socket.accept()
-            try:
-                data = conn.recv(1024)
-                if data:
-                    smart_data = json.loads(data.decode())
-                    logging.info(f"Received data from Smart Vehicle {smart_data['id']}:")
+            threading.Thread(target=self.handle_connection, args=(conn,)).start()
+
+        server_socket.close()
+
+    def handle_connection(self, conn):
+        try:
+            data = conn.recv(1024)
+            if data:
+                smart_data = json.loads(data.decode())
+                smart_vehicle_id = smart_data['id']
+
+                vehicles_in_radius = self.proximity_mapping.find_vehicles_in_radius(
+                    self.ego_vehicle, 
+                    [self.world.get_actor(data["actor_id"]) for data in self.vehicle_mapping.values()]
+                )
+
+                if smart_vehicle_id in vehicles_in_radius:
+                    logging.info(f"Received data from nearby Smart Vehicle {smart_vehicle_id}:")
                     logging.info(f"  Global Position: {smart_data['position']}")
                     logging.info(f"  Global Rotation: {smart_data['rotation']}")
                     logging.info(f"  Speed: {smart_data['speed']:.2f} m/s")
-                    
-                    # Compute relative pose if ego vehicle is defined
+
+                    if "lidar" in smart_data:
+                        lidar_points = smart_data['lidar']
+                        logging.info(f"  LIDAR Data: {len(lidar_points)} points received.")
+                        self.lidar_data_proximity[smart_vehicle_id] = lidar_points
+
                     if self.ego_vehicle:
                         relative_pose = self.compute_relative_pose(smart_data)
                         logging.info(f"  Relative Position: {relative_pose['relative_position']}")
                         logging.info(f"  Relative Yaw: {relative_pose['relative_yaw']:.2f} degrees")
-            except Exception as e:
-                logging.error(f"Error receiving data: {e}")
-            finally:
-                conn.close()
+
+                    self.combine_lidar_data()
+                else:
+                    logging.debug(f"Smart Vehicle {smart_vehicle_id} is not in proximity. Ignoring data.")
+        except Exception as e:
+            logging.error(f"Error in connection: {e}")
+        finally:
+            conn.close()
+
+    def combine_lidar_data(self):
+        combined_lidar = []
+        for vehicle_id, lidar_points in self.lidar_data_proximity.items():
+            combined_lidar.extend(lidar_points)
+        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
+
+    def stop_listener(self):
+        self.running = False
+
+    def combine_lidar_data(self):
+        """
+        Combines LIDAR data from all smart vehicles in proximity into a single dataset.
+        """
+        combined_lidar = []
+        for vehicle_id, lidar_points in self.lidar_data_proximity.items():
+            combined_lidar.extend(lidar_points)
+        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
+
+    def stop_listener(self):
+        """
+        Stops the listener gracefully.
+        """
+        self.running = False

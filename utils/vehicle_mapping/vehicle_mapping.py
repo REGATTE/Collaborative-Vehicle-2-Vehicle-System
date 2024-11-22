@@ -4,29 +4,30 @@ import os
 
 MAPPING_FILE_PATH = "utils/vehicle_mapping/vehicle_mapping.json"
 
-def save_vehicle_mapping(vehicle_mapping):
+def save_vehicle_mapping(vehicle_mapping, mapping_file_path=MAPPING_FILE_PATH):
     """
-    Saves the vehicle mapping to a JSON file, ensuring only serializable data is saved.
+    Saves the vehicle mapping to a JSON file, ensuring only valid actor data is saved.
     :param vehicle_mapping: Dictionary containing vehicle and sensor mappings.
+    :param mapping_file_path: Path to save the JSON file.
     """
-    serializable_mapping = {}
-
     try:
-        for label, data in vehicle_mapping.items():
-            serializable_mapping[label] = {
-                "actor_id": data["actor"].id,  # Save only the actor ID
-                "sensors": [sensor.id for sensor in data["sensors"]],  # Save sensor IDs
+        serializable_mapping = {
+            label: {
+                "actor_id": data["actor_id"],
+                "sensors": [sensor.id for sensor in data["sensors"]]
             }
+            for label, data in vehicle_mapping.items()
+        }
 
-        with open(MAPPING_FILE_PATH, "w") as file:
+        # Write to file
+        with open(mapping_file_path, "w") as file:
             json.dump(serializable_mapping, file, indent=4)
-            file.flush()
-            os.fsync(file.fileno())  # Ensure data is written to disk
-        logging.info(f"Vehicle mapping saved to {MAPPING_FILE_PATH}")
+        logging.info(f"Vehicle mapping saved to {mapping_file_path}")
     except Exception as e:
         logging.error(f"Error saving vehicle mapping: {e}")
 
-def load_vehicle_mapping(file_path):
+        
+def load_vehicle_mapping(file_path=MAPPING_FILE_PATH):
     """
     Load the vehicle mapping from the given JSON file.
     :param file_path: Path to the JSON file containing vehicle mapping data.

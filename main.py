@@ -98,7 +98,7 @@ def attach_follow_camera(world, vehicle, camera_transform):
         logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
         return None, None
 
-def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, ego_vehicle, smart_vehicles):
+def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, ego_vehicle, smart_vehicles, lidar_data_buffer):
     """
     Main game loop for updating the CARLA world and PyGame display.
     """
@@ -107,55 +107,83 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     menu_bar_height = 30
     width, height = game_display.get_size()
 
-    proximity_mapping = ProximityMapping(radius=20.0)
-    proximity_state = {}  # Initialize proximity tracking state
+    proximity_mapping = ProximityMapping(world, radius=20.0)
+    proximity_state = {}  # Proximity tracking state
 
     # List of vehicle labels
     vehicle_keys = list(vehicle_mapping.keys())
     current_vehicle_index = 0
     active_vehicle_label = vehicle_keys[current_vehicle_index]
 
-    while not crashed:
-        world.tick()  # Advance simulation by one tick
-        game_display.fill((0, 0, 0))  # Clear the screen
+    try:
+        while not crashed:
+            # Tick the simulation
+            world.tick()
 
-        # Render the camera feed
-        if render_object.surface:
-            game_display.blit(render_object.surface, (0, menu_bar_height))  # Offset for menu bar height
+            # Clear the screen
+            game_display.fill((0, 0, 0))
 
-        # Render the menu bar
-        env_manager.draw_vehicle_labels_menu_bar(game_display, font, vehicle_mapping, width, active_vehicle_label)
+            # Render the camera feed
+            if render_object.surface:
+                game_display.blit(render_object.surface, (0, menu_bar_height))  # Offset for menu bar height
 
-        # Log proximity information
-        proximity_mapping.log_proximity_and_trigger_communication(ego_vehicle, smart_vehicles, world, proximity_state)
+            # Render the menu bar
+            env_manager.draw_vehicle_labels_menu_bar(game_display, font, vehicle_mapping, width, active_vehicle_label)
 
-        pygame.display.flip()
-        control_object.process_control()
+            # Proximity mapping and LIDAR logic
+            try:
+                proximity_mapping.log_proximity_and_trigger_communication(
+                    ego_vehicle,
+                    [smart_vehicle.id for smart_vehicle in smart_vehicles],
+                    world,
+                    proximity_state,
+                    vehicle_mapping,
+                    lidar_data_buffer,
+                )
+            except Exception as e:
+                logging.error(f"Error in proximity mapping: {e}")
 
-        # Handle PyGame events
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                crashed = True
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_TAB:
-                    # Switch to the next vehicle
-                    current_vehicle_index = (current_vehicle_index + 1) % len(vehicle_keys)
-                    active_vehicle_label = vehicle_keys[current_vehicle_index]
-                    logging.info(f"Switched to vehicle: {active_vehicle_label}")
+            pygame.display.flip()  # Update the PyGame display
+            control_object.process_control()
 
-                    # Reattach the camera to the newly selected vehicle
-                    new_vehicle = vehicle_mapping[active_vehicle_label]["actor"]
-                    if camera.is_listening:
-                        camera.stop()
-                    camera.destroy()
-                    camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
-                    camera, camera_bp = attach_follow_camera(world, new_vehicle, camera_transform)
-                    camera.listen(lambda image: pygame_callback(image, render_object))
+            # Handle PyGame events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    crashed = True
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_TAB:
+                        # Switch vehicle
+                        try:
+                            current_vehicle_index = (current_vehicle_index + 1) % len(vehicle_keys)
+                            active_vehicle_label = vehicle_keys[current_vehicle_index]
+                            logging.info(f"Switched to vehicle: {active_vehicle_label}")
 
-    if camera.is_listening:
-        camera.stop()
-    camera.destroy()
-    pygame.quit()
+                            # Reattach camera
+                            new_vehicle = world.get_actor(vehicle_mapping[active_vehicle_label]["actor_id"])
+                            if camera and camera.is_listening:
+                                camera.stop()
+                                camera.destroy()
+
+                            camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
+                            camera, camera_bp = attach_follow_camera(world, new_vehicle, camera_transform)
+                            if not camera:
+                                logging.error(f"Failed to attach camera to {active_vehicle_label}.")
+                                continue
+                            camera.listen(lambda image: pygame_callback(image, render_object))
+                        except Exception as e:
+                            logging.error(f"Error switching to vehicle {active_vehicle_label}: {e}")
+
+    except Exception as e:
+        logging.error(f"An error occurred during the game loop: {e}")
+    finally:
+        # Cleanup camera
+        if camera and camera.is_listening:
+            camera.stop()
+            camera.destroy()
+
+        # Quit PyGame
+        pygame.quit()
+        logging.info("Game loop terminated.")
 
 def main():
     """
@@ -164,18 +192,40 @@ def main():
     configure_logging()
     logging.info("Starting CARLA simulation...")
 
+    # Load configuration
     config = load_config("utils/config/config.yaml")
     logging.info("Configuration loaded successfully from utils/config/config.yaml")
 
+    # Initialize CARLA client and world
     client, world = initialize_carla()
+    logging.info("Client and world initialized successfully.")
+    
     traffic_manager = client.get_trafficmanager()
     setup_synchronous_mode(world, traffic_manager, config)
 
+    # Environment manager
     env_manager = EnvironmentManager(world)
+
+    # Initialize data buffers and tracking
+    attached_sensors = []
+    lidar_data_buffer = {}
+
+    # Proximity mapping for LIDAR
+    proximity_mapping = ProximityMapping(world, radius=20.0)
+
+    # Initial cleanup
     env_manager.cleanup_existing_actors()
 
-    vehicles = env_manager.spawn_with_retries(client, traffic_manager, config.simulation.num_vehicles, config.simulation.spawn_retries)
-    ego_vehicle, smart_vehicles, vehicle_mapping = env_manager.designate_ego_and_smart_vehicles(vehicles, world, config)
+    # Spawn vehicles
+    vehicles = env_manager.spawn_with_retries(
+        client, traffic_manager, config.simulation.num_vehicles, config.simulation.spawn_retries
+    )
+    ego_vehicle, smart_vehicles, vehicle_mapping = env_manager.designate_ego_and_smart_vehicles(
+        vehicles, world, config
+    )
+
+    # Cleanup after designation
+    env_manager.cleanup_existing_actors(vehicle_mapping=vehicle_mapping)
 
     # Start the ego listener in a separate thread
     ego_listener = EgoVehicleListener(host='127.0.0.1', port=65432, ego_vehicle=ego_vehicle)
@@ -183,36 +233,66 @@ def main():
     ego_listener_thread.start()
 
     time.sleep(1)
-    
+
+    # Attach sensors
     sensors = Sensors()
-    ego_vehicle_sensors = sensors.attach_sensor_suite(world, ego_vehicle, "ego_veh")
+    ego_vehicle_sensors = sensors.attach_sensor_suite(
+        world, ego_vehicle, "ego_veh", lidar_data_buffer, attached_sensors, ego_vehicle, proximity_mapping
+    )
     logging.info(f"Ego vehicle has {len(ego_vehicle_sensors)} sensors attached.")
 
     for idx, smart_vehicle in enumerate(smart_vehicles, start=1):
         vehicle_label = f"smart_veh_{idx}"
-        smart_sensors = sensors.attach_sensor_suite(world, smart_vehicle, vehicle_label)
+        smart_sensors = sensors.attach_sensor_suite(
+            world, smart_vehicle, vehicle_label, lidar_data_buffer, attached_sensors, ego_vehicle, proximity_mapping
+        )
         vehicle_mapping[vehicle_label]["sensors"] = smart_sensors
         logging.info(f"{vehicle_label} has {len(smart_sensors)} sensors attached.")
     vehicle_mapping["ego_veh"]["sensors"] = ego_vehicle_sensors
 
-    #save mapping to a json file
+    # Save vehicle mapping to a JSON file
     save_vehicle_mapping(vehicle_mapping)
 
-    # Attach a camera to the ego vehicle for interactive visualization
+    # Attach a camera for visualization
     camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
     camera, camera_bp = attach_follow_camera(world, ego_vehicle, camera_transform)
     game_display, width, height = initialize_pygame(None, len(vehicle_mapping), fixed_resolution=(1920, 1080))
     render_object = RenderObject(width, height - 30)
     control_object = ControlObject(ego_vehicle)
 
-    # Start listening to the camera
+    # Start camera feed
     camera.listen(lambda image: pygame_callback(image, render_object))
-    try:
-        game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, ego_vehicle, smart_vehicles)
-    finally:
-        pygame.quit()  # Close the PyGame window
-        cleanup(client, vehicles, [])  # Clean up actors
 
+    try:
+        game_loop(
+            world, game_display, camera, render_object, control_object,
+            vehicle_mapping, env_manager, ego_vehicle, smart_vehicles, lidar_data_buffer
+        )
+    except Exception as e:
+        logging.error(f"An error occurred during the simulation: {e}")
+    finally:
+        logging.info("Shutting down simulation...")
+        pygame.quit()  # Close PyGame window
+
+        # Cleanup attached sensors
+        logging.info("Cleaning up sensors...")
+        for sensor in attached_sensors:
+            try:
+                if sensor.is_alive:
+                    sensor.stop()
+                    sensor.destroy()
+                    logging.info(f"Destroyed sensor ID: {sensor.id}")
+            except Exception as e:
+                logging.error(f"Failed to clean up sensor ID: {sensor.id} - {e}")
+        logging.info("All sensors cleaned up successfully.")
+
+        # Stop the ego listener thread
+        ego_listener.stop_listener()
+        ego_listener_thread.join()
+
+        # Cleanup vehicles and other actors
+        cleanup(client, vehicles, [])
+        logging.info("Simulation terminated.")
 
 if __name__ == "__main__":
     main()

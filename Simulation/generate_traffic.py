@@ -48,6 +48,7 @@ def spawn_vehicles(client, world, traffic_manager, number_of_vehicles=10, safe_m
         vehicle_blueprints = [bp for bp in vehicle_blueprints if bp.get_attribute('base_type') == 'car']
 
     spawn_points = world.get_map().get_spawn_points()
+    logging.info(f"Available spawn points before filtering: {len(spawn_points)}")
     random.shuffle(spawn_points)
     number_of_vehicles = min(number_of_vehicles, len(spawn_points))
 

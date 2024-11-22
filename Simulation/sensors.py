@@ -1,137 +1,216 @@
 import carla
 import logging
+import numpy as np
 
 class Sensors:
     def __init__(self):
-        # Add your initialization logic here
+        # Initialization logic if needed
         pass
 
     def sensor_suite(self):  # pylint: disable=no-self-use
-        
+        """
+        Returns the configuration for the sensor suite.
+        """
         sensors = [
-            #Camera
-            {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': -0.4, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 1280, 'height': 720, 'fov': 100, 'id': 'Left'},
-            {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': 0.4, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 1280, 'height': 720, 'fov': 100, 'id': 'Right'},
-            {'type': 'sensor.camera.rgb', 'x': 0.7, 'y': 0.0, 'z': 1.60, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0, 'width': 1280, 'height': 720, 'fov': 100, 'id': 'Center'},
-            #Lidar
-            {'type': 'sensor.lidar.ray_cast', 'x': 0.7, 'y': 0.0, 'z': 1.60, 'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0, 'range': 50, 'rotation_frequency': 20, 'channels': 64, 'upper_fov': 4, 'lower_fov': -20, 'points_per_second': 2304000, 'id': 'LIDAR'},
-            #GPS
-            {'type': 'sensor.other.gnss', 'x': 0.7, 'y': -0.4, 'z': 1.60, 'id': 'GPS'},
+            # Cameras
+            {
+                'type': 'sensor.camera.rgb',
+                'transform': {'x': 0.7, 'y': -0.4, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
+                'attributes': {'width': 1280, 'height': 720, 'fov': 100},
+                'id': 'Left'
+            },
+            {
+                'type': 'sensor.camera.rgb',
+                'transform': {'x': 0.7, 'y': 0.4, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
+                'attributes': {'width': 1280, 'height': 720, 'fov': 100},
+                'id': 'Right'
+            },
+            {
+                'type': 'sensor.camera.rgb',
+                'transform': {'x': 0.7, 'y': 0.0, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
+                'attributes': {'width': 1280, 'height': 720, 'fov': 100},
+                'id': 'Center'
+            },
+            # LiDAR
+            {
+                'type': 'sensor.lidar.ray_cast',
+                'transform': {'x': 0.7, 'y': 0.0, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
+                'attributes': {
+                    'range': 50, 'rotation_frequency': 20, 'channels': 64,
+                    'upper_fov': 4, 'lower_fov': -20, 'points_per_second': 2304000
+                },
+                'id': 'LIDAR'
+            },
+            # GNSS
+            {
+                'type': 'sensor.other.gnss',
+                'transform': {'x': 0.7, 'y': -0.4, 'z': 1.6},
+                'id': 'GPS'
+            }
         ]
         return sensors
-    
-    def attach_camera(self, world, vehicle, camera_config):
+
+    def attach_camera(self, world, vehicle, camera_config, transform):
         """
         Attaches a camera to the vehicle.
-        :param world: The CARLA world object.
-        :param vehicle: The CARLA vehicle actor.
-        :param camera_config: Configuration dictionary for the camera.
-        :return: The camera sensor actor.
         """
         try:
             blueprint_library = world.get_blueprint_library()
-            camera_bp = blueprint_library.find('sensor.camera.rgb')
-            camera_bp.set_attribute('image_size_x', str(camera_config['width']))
-            camera_bp.set_attribute('image_size_y', str(camera_config['height']))
-            camera_bp.set_attribute('fov', str(camera_config['fov']))
-            
-            sensor_transform = carla.Transform(
-                carla.Location(x=camera_config['x'], y=camera_config['y'], z=camera_config['z']),
-                carla.Rotation(roll=camera_config['roll'], pitch=camera_config['pitch'], yaw=camera_config['yaw'])
-            )
+            camera_bp = blueprint_library.find(camera_config['type'])
 
-            camera = world.spawn_actor(camera_bp, sensor_transform, attach_to=vehicle)
+            # Ensure attributes are set only if they exist in the blueprint
+            attributes = camera_config.get('attributes', {})
+            for key, value in attributes.items():
+                if camera_bp.has_attribute(key):
+                    camera_bp.set_attribute(key, str(value))
+                else:
+                    logging.warning(f"Attribute '{key}' not found in camera blueprint.")
+
+            camera = world.spawn_actor(camera_bp, transform, attach_to=vehicle)
             logging.info(f"Attached Camera with ID: {camera.id} to Vehicle ID: {vehicle.id}")
             return camera
         except Exception as e:
             logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
             return None
 
-    def attach_lidar(self, world, vehicle, label):
+    def attach_lidar(self, world, vehicle, lidar_config, transform):
         """
-        Attaches a LiDAR sensor to the vehicle. 
-        :param world: The CARLA world object.
-        :param vehicle: The CARLA vehicle actor.
-        :param label: The CARLA vehicle label.
-        :return: The LiDAR sensor actor.
+        Attaches a LiDAR sensor to the vehicle.
         """
         try:
             blueprint_library = world.get_blueprint_library()
-            lidar_bp = blueprint_library.find('sensor.lidar.ray_cast')
-            lidar_bp.set_attribute('channels', '32')
-            lidar_bp.set_attribute('range', '50')
-            lidar_bp.set_attribute('points_per_second', '56000')
-            lidar_bp.set_attribute('rotation_frequency', '10')
-
-            # Attach the LiDAR sensor to the vehicle
-            lidar_transform = carla.Transform(carla.Location(x=0, y=0, z=2.5))
-            lidar = world.spawn_actor(lidar_bp, lidar_transform, attach_to=vehicle)
-            logging.info(f"LiDAR attached to {label} (Vehicle ID: {vehicle.id})")
+            lidar_bp = blueprint_library.find(lidar_config['type'])
+            for key, value in lidar_config.get('attributes', {}).items():
+                lidar_bp.set_attribute(key, str(value))
+            lidar = world.spawn_actor(lidar_bp, transform, attach_to=vehicle)
+            logging.info(f"LiDAR attached with ID: {lidar.id} to Vehicle ID: {vehicle.id}")
             return lidar
         except Exception as e:
-            logging.error(f"Error attaching LiDAR to {label} (Vehicle ID: {vehicle.id}): {e}")
+            logging.error(f"Error attaching LiDAR to Vehicle ID: {vehicle.id}: {e}")
             return None
 
+    def lidar_callback(self, data, vehicle_id, ego_vehicle, proximity_mapping, lidar_data_buffer):
+        """
+        Process LIDAR data for vehicles in proximity.
+        """
+        try:
+            # Ensure the vehicle ID is valid
+            if isinstance(vehicle_id, int):
+                vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
+            else:
+                logging.error(f"Invalid vehicle ID type: {vehicle_id}. Skipping.")
+                return
 
-    def attach_gnss(self, world, vehicle, gnss_config):
+            # Check if the vehicle is in proximity
+            nearby_vehicles = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
+            if not nearby_vehicles:
+                # logging.debug(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
+                return
+
+            # Process LIDAR data
+            points = len(data)  # Example: Count number of LIDAR points
+            lidar_data_buffer[vehicle_id] = points
+            logging.info(f"Vehicle ID {vehicle_id} is {nearby_vehicles[vehicle_id][1]:.2f}m from Ego Vehicle.")
+            logging.debug(f"LIDAR data processed for vehicle {vehicle_id}: {points} points.")
+        except Exception as e:
+            logging.error(f"Error in LIDAR callback for vehicle {vehicle_id}: {e}")
+
+
+    def attach_gnss(self, world, vehicle, gnss_config, transform):
         """
         Attaches a GNSS sensor to the vehicle.
-        :param world: The CARLA world object.
-        :param vehicle: The CARLA vehicle actor.
-        :param gnss_config: Configuration dictionary for the GNSS sensor.
-        :return: The GNSS sensor actor.
         """
         try:
             blueprint_library = world.get_blueprint_library()
-            gnss_bp = blueprint_library.find('sensor.other.gnss')
-            
-            sensor_transform = carla.Transform(
-                carla.Location(x=gnss_config['x'], y=gnss_config['y'], z=gnss_config['z'])
-            )
-
-            gnss = world.spawn_actor(gnss_bp, sensor_transform, attach_to=vehicle)
+            gnss_bp = blueprint_library.find(gnss_config['type'])
+            gnss = world.spawn_actor(gnss_bp, transform, attach_to=vehicle)
             logging.info(f"Attached GNSS with ID: {gnss.id} to Vehicle ID: {vehicle.id}")
             return gnss
         except Exception as e:
             logging.error(f"Error attaching GNSS to Vehicle ID: {vehicle.id}: {e}")
             return None
 
-    def attach_sensor_suite(self, world, vehicle, vehicle_label):
+    def attach_sensor_suite(self, world, vehicle, vehicle_label, lidar_data_buffer, attached_sensors, ego_vehicle, proximity_mapping):
         """
         Attaches a full sensor suite (Camera, LiDAR, GNSS) to the vehicle.
-        :param world: The CARLA world object.
-        :param vehicle: The CARLA vehicle actor.
-        :param vehicle_label: Label for the vehicle (e.g., "ego_veh").
-        :return: List of attached sensor actors.
         """
         sensors_config = self.sensor_suite()
-        attached_sensors = []
+        vehicle_sensors = []
+        blueprint_library = world.get_blueprint_library()
 
-        try:
-            for sensor_config in sensors_config:
+        for sensor_config in sensors_config:
+            try:
+                # Validate sensor configuration
+                if 'type' not in sensor_config or 'transform' not in sensor_config:
+                    logging.warning(f"Invalid sensor configuration: {sensor_config}")
+                    continue
+
                 sensor_type = sensor_config['type']
-                logging.debug(f"Attempting to attach {sensor_type} to {vehicle_label} (ID: {vehicle.id})")
+                transform_config = sensor_config['transform']
+                transform = carla.Transform(
+                    carla.Location(x=transform_config['x'], y=transform_config['y'], z=transform_config['z']),
+                    carla.Rotation(
+                        roll=transform_config.get('roll', 0.0),
+                        pitch=transform_config.get('pitch', 0.0),
+                        yaw=transform_config.get('yaw', 0.0),
+                    )
+                )
 
-                if sensor_type == 'sensor.camera.rgb':
-                    camera = self.attach_camera(world, vehicle, sensor_config)
-                    if camera:
-                        attached_sensors.append(camera)
-                        logging.info(f"Attached Camera (ID: {camera.id}) to {vehicle_label} (ID: {vehicle.id})")
+                if sensor_type == "sensor.lidar.ray_cast":
+                    # Attach the LIDAR sensor
+                    lidar_bp = blueprint_library.find(sensor_config['type'])
+                    lidar_bp.set_attribute('range', '50')  # Set LIDAR range
+                    lidar_bp.set_attribute('rotation_frequency', '20')
+                    lidar_bp.set_attribute('channels', '32')
+                    lidar_bp.set_attribute('points_per_second', '56000')
 
-                elif sensor_type == 'sensor.lidar.ray_cast':
-                    lidar = self.attach_lidar(world, vehicle, sensor_config)
+                    # Spawn the LIDAR sensor and attach to the vehicle
+                    lidar = world.spawn_actor(lidar_bp, transform, attach_to=vehicle)
                     if lidar:
+                        vehicle_sensors.append(lidar)
                         attached_sensors.append(lidar)
-                        logging.info(f"Attached LiDAR (ID: {lidar.id}) to {vehicle_label} (ID: {vehicle.id})")
+                        logging.info(f"LIDAR attached with ID: {lidar.id} to Vehicle ID: {vehicle.id}")
 
-                elif sensor_type == 'sensor.other.gnss':
-                    gnss = self.attach_gnss(world, vehicle, sensor_config)
+                        # Attach the callback for LIDAR
+                        lidar.listen(
+                            lambda data: self.lidar_callback(data, vehicle.id, ego_vehicle, proximity_mapping, lidar_data_buffer)
+                        )
+                    else:
+                        logging.warning(f"Failed to attach LIDAR to Vehicle ID: {vehicle.id}")
+
+                elif sensor_type == "sensor.camera.rgb":
+                    # Retrieve the camera blueprint
+                    camera_bp = blueprint_library.find(sensor_config['type'])
+
+                    # Ensure image size attributes are set
+                    if camera_bp.has_attribute('image_size_x') and camera_bp.has_attribute('image_size_y'):
+                        camera_bp.set_attribute('image_size_x', '1920')  # Example resolution
+                        camera_bp.set_attribute('image_size_y', '1080')
+                    else:
+                        logging.warning("Camera blueprint does not support resolution attributes.")
+
+                    # Set other attributes (if required, e.g., FOV)
+                    if camera_bp.has_attribute('fov'):
+                        camera_bp.set_attribute('fov', '90')
+
+                    # Spawn the camera and attach it to the vehicle
+                    camera = world.spawn_actor(camera_bp, transform, attach_to=vehicle)
+                    if camera:
+                        vehicle_sensors.append(camera)
+                        attached_sensors.append(camera)
+                        logging.info(f"Camera attached with ID: {camera.id} to Vehicle ID: {vehicle.id}")
+                    else:
+                        logging.warning(f"Failed to attach camera to Vehicle ID: {vehicle.id}")
+
+                elif sensor_type == "sensor.other.gnss":
+                    # Attach GNSS sensor
+                    gnss = self.attach_gnss(world, vehicle, sensor_config, transform)
                     if gnss:
+                        vehicle_sensors.append(gnss)
                         attached_sensors.append(gnss)
-                        logging.info(f"Attached GNSS (ID: {gnss.id}) to {vehicle_label} (ID: {vehicle.id})")
 
-            logging.info(f"[{vehicle_label}] Total sensors attached: {len(attached_sensors)}")
-        except Exception as e:
-            logging.error(f"Error attaching sensor suite to {vehicle_label}: {e}")
+            except Exception as e:
+                logging.error(f"Error attaching {sensor_type} to {vehicle_label}: {e}")
 
-        return attached_sensors
+        logging.info(f"[{vehicle_label}] Total sensors successfully attached: {len(vehicle_sensors)}")
+        return vehicle_sensors
