@@ -10,6 +10,9 @@ simulation:
     y: 0
     z: 20  # Position spectator camera above the ego vehicle
     pitch: -90
+  npc_num_vehicles: 30
+  npc_num_walkers: 30
+  npc_global_dist_lv: 2.5
 
 colors:
   ego_vehicle: [255, 0, 0]  # Red for ego vehicle
