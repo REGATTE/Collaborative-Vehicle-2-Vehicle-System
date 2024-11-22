@@ -9,6 +9,18 @@ git clone https://github.com/REGATTE/Collaborative-Vehicle-2-Vehicle-System.git
 
 ## Simulation
 
+### Launch with a bash file
+
+update the file [sim_launch](sim_launch.bash) with your password and path to the project. 
+
+run 
+
+```bash
+./sim_launch.bash
+```
+
+### Launch manually
+
 If you need to install carla, follow these steps - [Install Carla](docs/installation.md)
 
 In the first terminal
