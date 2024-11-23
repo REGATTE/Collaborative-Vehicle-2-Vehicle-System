@@ -217,11 +217,11 @@ def main():
     env_manager.cleanup_existing_actors()
 
     # Spawn vehicles
-    vehicles = env_manager.spawn_with_retries(
+    vehicles, spawn_locations = env_manager.spawn_with_retries(
         client, traffic_manager, config.simulation.num_vehicles, config.simulation.spawn_retries
     )
     ego_vehicle, smart_vehicles, vehicle_mapping = env_manager.designate_ego_and_smart_vehicles(
-        vehicles, world, config
+        vehicles, spawn_locations, world, config
     )
 
     # Cleanup after designation

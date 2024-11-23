@@ -14,7 +14,8 @@ def save_vehicle_mapping(vehicle_mapping, mapping_file_path=MAPPING_FILE_PATH):
         serializable_mapping = {
             label: {
                 "actor_id": data["actor_id"],
-                "sensors": [sensor.id for sensor in data["sensors"]]
+                "sensors": [sensor.id for sensor in data["sensors"]],
+                "initial_position": data.get("initial_position", {})  # Include initial position if available
             }
             for label, data in vehicle_mapping.items()
         }
