@@ -91,31 +91,37 @@ class Sensors:
 
     def lidar_callback(self, data, vehicle_id, ego_vehicle, proximity_mapping, lidar_data_buffer, lidar_data_lock):
         """
-        Process LIDAR data for vehicles in proximity.
+        Callback method for processing LIDAR data.
         """
         try:
             with lidar_data_lock:
                 # Ensure the vehicle ID is valid
-                if isinstance(vehicle_id, int):
-                    vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
-                else:
+                if not isinstance(vehicle_id, int):
                     logging.error(f"Invalid vehicle ID type: {vehicle_id}. Skipping.")
                     return
+                
+                vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
 
-                # Check if the vehicle is in proximity
-                nearby_vehicles = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
-                if not nearby_vehicles:
-                    # logging.debug(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
-                    return
-
-                # Process LIDAR data
-                points = len(data)  # Example: Count number of LIDAR points
-                lidar_data_buffer[vehicle_id] = points
-                logging.info(f"Vehicle ID {vehicle_id} is {nearby_vehicles[vehicle_id][1]:.2f}m from Ego Vehicle.")
-                logging.debug(f"LIDAR data processed for vehicle {vehicle_id}: {points} points.")
+                # Delegate LIDAR processing to a separate method
+                self.process_lidar_data(data, vehicle_actor, ego_vehicle, proximity_mapping, lidar_data_buffer)
         except Exception as e:
             logging.error(f"Error in LIDAR callback for vehicle {vehicle_id}: {e}")
 
+    def process_lidar_data(self, data, vehicle_actor, ego_vehicle, proximity_mapping, lidar_data_buffer):
+        """
+        Processes the LIDAR data for a given vehicle.
+        """
+        # Check if the vehicle is in proximity
+        nearby_vehicles = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
+        if not nearby_vehicles:
+            # logging.debug(f"Vehicle ID {vehicle_actor.id} is not in proximity. Ignoring LIDAR data.")
+            return
+
+        # Process LIDAR data
+        points = len(data)  # Example: Count number of LIDAR points
+        lidar_data_buffer[vehicle_actor.id] = points
+        logging.info(f"Vehicle ID {vehicle_actor.id} is {nearby_vehicles[vehicle_actor.id][1]:.2f}m from Ego Vehicle.")
+        logging.debug(f"LIDAR data processed for vehicle {vehicle_actor.id}: {points} points.")
 
     def attach_gnss(self, world, vehicle, gnss_config, transform):
         """

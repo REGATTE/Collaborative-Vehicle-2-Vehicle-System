@@ -121,6 +121,9 @@ class EnvironmentManager:
 
         if len(spawned_vehicles) < num_vehicles:
             logging.warning(f"Only {len(spawned_vehicles)} out of {num_vehicles} vehicles were spawned.")
+        
+        if len(spawned_vehicles) != len(spawn_locations):
+            raise ValueError(f"Mismatch between spawned vehicles ({len(spawned_vehicles)}) and spawn locations ({len(spawn_locations)})")
 
         return spawned_vehicles, spawn_locations
 

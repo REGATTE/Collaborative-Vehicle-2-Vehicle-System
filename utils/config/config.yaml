@@ -21,3 +21,6 @@ colors:
 logging:
   level: info  # Logging level (info, warning, error)
   log_file: "simulation.log"  # Log output file
+
+waypoint_manager:
+  WAYPOINT_UPDATE_INTERVAL: 20

@@ -2,7 +2,8 @@ import carla
 import logging
 import random
 import numpy as np
-import time
+import math
+
 
 """
 This code ensures that vehicles dynamically adjust their paths when they stray too far 
@@ -33,10 +34,73 @@ Generate Independent Waypoints:
 Proximity Trigger:
 
     Add a check to stop generating waypoints toward the ego vehicle if the smart vehicle is within a certain range (e.g., proximity_radius / 2).
+---
 
+Added WaypointGenerator class to 
+    Simplified State Management: 
+        The generator does not maintain internal state for waypoints, reducing complexity.
+
+    Dynamic Generation: 
+        Waypoints are generated dynamically based on the current location and optional target location.
+
+    Flexibility: 
+        Supports both directed movement and randomized waypoint generation within a defined region.
 """
 
+class WaypointGenerator:
+    """
+    A stateless generator for dynamic waypoint generation.
+    """
+    def __init__(self, world, region_center, region_radius):
+        """
+        Initializes the Waypoint Generator with a circular operational region.
+        :param world: CARLA world instance.
+        :param region_center: Center of the operational region as a carla.Location object.
+        :param region_radius: Radius of the operational region in meters.
+        """
+        self.world = world
+        self.map = world.get_map()
+        self.center = region_center
+        self.radius = region_radius
+
+    def get_next_waypoint(self, current_location, target_location=None):
+        """
+        Generates the next waypoint based on the target location or circular path logic.
+        :param current_location: Current location of the vehicle.
+        :param target_location: Optional target location for directed movement.
+        :return: The next waypoint.
+        """
+        if target_location and current_location.distance(target_location) > self.radius / 2:
+            # Generate a waypoint moving toward the target
+            return self._get_waypoint_toward(current_location, target_location)
+        else:
+            # Generate a waypoint within a circular path
+            angle = random.uniform(0, 2 * math.pi)
+            distance = random.uniform(0.3 * self.radius, 0.8 * self.radius)
+            next_point = carla.Location(
+                x=self.center.x + distance * math.cos(angle),
+                y=self.center.y + distance * math.sin(angle),
+                z=self.center.z
+            )
+            return self.map.get_waypoint(next_point)
+
+    def _get_waypoint_toward(self, current_location, target_location):
+        """
+        Generates a waypoint moving toward a target location.
+        :param current_location: Current location of the vehicle.
+        :param target_location: Target location to move toward.
+        :return: The next waypoint.
+        """
+        direction_vector = target_location - current_location
+        normalized_direction = direction_vector / max(direction_vector.length(), 1e-6)  # Avoid division by zero
+        next_location = current_location + normalized_direction * min(10.0, direction_vector.length() * 0.5)
+        return self.map.get_waypoint(next_location)
+
+
 class WaypointManager:
+    """
+    Manages vehicle waypoints using the stateless WaypointGenerator.
+    """
     def __init__(self, world, vehicle_mapping, region_center, region_radius):
         """
         Initializes the Waypoint Manager with a circular operational region.
@@ -44,158 +108,52 @@ class WaypointManager:
         :param vehicle_mapping: Vehicle mapping dictionary with initial positions.
         :param region_center: Center of the operational region as a carla.Location object.
         :param region_radius: Radius of the operational region in meters.
-        :param proximity_radius: Radius for proximity-based interactions.
         """
         self.world = world
-        self.map = world.get_map()
         self.vehicle_mapping = vehicle_mapping
-        self.region_center = region_center
-        self.region_radius = region_radius
-        self.waypoints = {}
+        self.generator = WaypointGenerator(world, region_center, region_radius)
         self.update_counter = 0
-        self.last_warning_time = {}  # Track last warning log time per vehicle
 
-    def generate_initial_waypoints(self, num_waypoints=10, spacing=10.0):
-        """
-        Generates initial waypoints for all vehicles (excluding the ego vehicle) within the defined circular region.
-        """
-        for label, data in self.vehicle_mapping.items():
-            if label == "ego_veh":
-                continue  # Skip generating waypoints for the ego vehicle
-
-            initial_position = data["initial_position"]
-            base_location = carla.Location(
-                x=initial_position["x"], y=initial_position["y"], z=initial_position["z"]
-            )
-            self.waypoints[label] = self._generate_waypoints(base_location, num_waypoints, spacing)
-            logging.info(f"Generated {num_waypoints} waypoints for {label} starting from {initial_position}.")
-
-    def _generate_waypoints(self, base_location, num_waypoints, spacing):
-        """
-        Generates waypoints from a base location while ensuring they stay within the circular region.
-        """
-        waypoints = []
-        for i in range(num_waypoints):
-            offset_location = base_location + carla.Location(x=spacing * i, y=0, z=0)
-            if self._is_within_region(offset_location):
-                waypoints.append(self.map.get_waypoint(offset_location))
-            else:
-                break  # Stop generating waypoints if out of the circular region
-        return waypoints
-
-    def _is_within_region(self, location):
-        """
-        Checks if a given location is within the defined circular region.
-        """
-        distance_to_center = location.distance(self.region_center)
-        return distance_to_center <= self.region_radius
-
-    def update_waypoints_for_vehicle(self, vehicle_label, target_location=None, num_waypoints=5, spacing=10.0):
+    def update_waypoints_for_vehicle(self, vehicle_label, target_location=None):
         """
         Updates waypoints for a specific vehicle.
         If a target_location is provided, generate waypoints leading to it.
-        Diverts smart vehicles to independent paths if they are too close to the ego vehicle.
+        :param vehicle_label: Label of the vehicle to update.
+        :param target_location: Optional target location for directed movement.
         """
         vehicle_data = self.vehicle_mapping[vehicle_label]
         actor = self.world.get_actor(vehicle_data["actor_id"])
         if not actor:
+            logging.warning(f"Vehicle {vehicle_label} not found.")
             return
 
         current_location = actor.get_transform().location
+        next_waypoint = self.generator.get_next_waypoint(current_location, target_location)
 
-        if target_location:
-            # Check if the smart vehicle is too close to the ego vehicle
-            distance_to_target = current_location.distance(target_location)
-            if distance_to_target <= self.region_radius / 2:
-                # Log diversion events only once per proximity condition
-                if self.waypoints.get(vehicle_label, {}).get("logged_diversion", False) is False:
-                    logging.info(f"Vehicle {vehicle_label} is too close to the ego vehicle. Diverting to an independent path.")
-                    self.waypoints[vehicle_label] = {"logged_diversion": True}  # Mark as logged
-
-                # Generate independent waypoints
-                self.waypoints[vehicle_label] = self._generate_waypoints(current_location, num_waypoints, spacing)
-                return
-
-            # Generate waypoints toward the target location (e.g., ego vehicle)
+        if next_waypoint:
+            target_location = next_waypoint.transform.location
             direction_vector = target_location - current_location
-            normalized_direction = direction_vector / max(direction_vector.length(), 1e-6)  # Avoid division by zero
-            self.waypoints[vehicle_label] = [
-                self.map.get_waypoint(current_location + normalized_direction * spacing * i)
-                for i in range(num_waypoints)
-            ]
-            logging.debug(f"Updated waypoints for {vehicle_label} to move toward target location.")
-        else:
-            # Generate waypoints for independent movement
-            self.waypoints[vehicle_label] = self._generate_waypoints(current_location, num_waypoints, spacing)
+            normalized_direction = direction_vector / max(direction_vector.length(), 1e-6)
+            velocity = normalized_direction * 5.0  # Adjust speed as needed
+            actor.set_target_velocity(carla.Vector3D(x=velocity.x, y=velocity.y, z=velocity.z))
+            logging.info(f"Assigned new waypoint for {vehicle_label}.")
 
     def manage_all_vehicles(self, periodic_update_interval=10):
         """
         Manages waypoint updates and assignments for all vehicles.
         Periodically directs smart vehicles toward the ego vehicle, with proximity checks for diversion.
         """
-        # Get the ego vehicle's current location
         ego_data = self.vehicle_mapping["ego_veh"]
         ego_actor = self.world.get_actor(ego_data["actor_id"])
         ego_location = ego_actor.get_transform().location if ego_actor else None
 
         for vehicle_label in self.vehicle_mapping:
             if vehicle_label == "ego_veh":
-                # Skip updating the ego vehicle's waypoints
                 continue
 
-            # Periodically update waypoints to converge to the ego vehicle
             if self.update_counter % periodic_update_interval == 0 and ego_location:
                 self.update_waypoints_for_vehicle(vehicle_label, target_location=ego_location)
             else:
-                self.assign_next_waypoint(vehicle_label)
+                self.update_waypoints_for_vehicle(vehicle_label)
 
         self.update_counter += 1
-
-    def assign_next_waypoint(self, vehicle_label):
-        """
-        Assigns the next waypoint to the specified vehicle.
-        Smoothly moves the vehicle toward the next waypoint.
-        """
-        if vehicle_label == "ego_veh":
-            return  # Skip assigning waypoints for the ego vehicle
-
-        if vehicle_label not in self.waypoints or not self.waypoints[vehicle_label]:
-            # Throttle warning logs to once every 2 seconds
-            current_time = time.time()
-            if (
-                vehicle_label not in self.last_warning_time
-                or current_time - self.last_warning_time[vehicle_label] > 2
-            ):
-                logging.warning(f"No waypoints available for {vehicle_label}. Generating new waypoints.")
-                self.last_warning_time[vehicle_label] = current_time
-
-            # Generate independent waypoints if none are available
-            vehicle_data = self.vehicle_mapping[vehicle_label]
-            actor = self.world.get_actor(vehicle_data["actor_id"])
-            if actor:
-                current_location = actor.get_transform().location
-                self.waypoints[vehicle_label] = self._generate_waypoints(current_location, num_waypoints=5, spacing=10.0)
-            return
-
-        # Get the next waypoint
-        next_waypoint = self.waypoints[vehicle_label].pop(0)
-        vehicle_data = self.vehicle_mapping[vehicle_label]
-        actor = self.world.get_actor(vehicle_data["actor_id"])
-
-        if not actor:
-            logging.warning(f"Vehicle {vehicle_label} with ID {vehicle_data['actor_id']} not found.")
-            return
-
-        # Smoothly move toward the next waypoint
-        target_location = next_waypoint.transform.location
-        direction_vector = target_location - actor.get_transform().location
-        normalized_direction = direction_vector / max(direction_vector.length(), 1e-6)  # Avoid division by zero
-
-        # Set target velocity for smooth movement
-        velocity = normalized_direction * 5.0  # Adjust speed as needed
-        actor.set_target_velocity(carla.Vector3D(x=velocity.x, y=velocity.y, z=velocity.z))
-
-        # Log waypoint assignments only every 5 updates
-        self.update_counter += 1
-        if self.update_counter % 5 == 0:
-            logging.info(f"Assigned waypoint to {vehicle_label}.")

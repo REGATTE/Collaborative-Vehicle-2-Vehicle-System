@@ -20,6 +20,9 @@ from utils.carla_utils import initialize_carla, setup_synchronous_mode
 from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping
 from utils.proximity_mapping import ProximityMapping
 
+# Load configuration
+config = load_config("utils/config/config.yaml")
+
 class RenderObject:
     """
     Handles rendering images from the camera to a PyGame surface.
@@ -149,7 +152,7 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
             
             # Manage waypoints for smart vehicles
             try:
-                waypoint_manager.manage_all_vehicles(periodic_update_interval=20)  # Update every 20 ticks
+                waypoint_manager.manage_all_vehicles(periodic_update_interval=config.waypoint_manager.WAYPOINT_UPDATE_INTERVAL)  # Update every 20 ticks
             except Exception as e:
                 logging.error(f"Error in waypoint management: {e}")
 
@@ -202,8 +205,6 @@ def main():
     configure_logging()
     logging.info("Starting CARLA simulation...")
 
-    # Load configuration
-    config = load_config("utils/config/config.yaml")
     logging.info("Configuration loaded successfully from utils/config/config.yaml")
 
     # Initialize CARLA client and world
