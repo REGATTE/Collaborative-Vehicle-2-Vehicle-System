@@ -32,51 +32,83 @@ def spawn_vehicles(client, world, traffic_manager, number_of_vehicles=10, safe_m
     Spawn vehicles in the simulation with specified configurations.
     Ensures only cars are spawned if safe_mode is True.
     """
-    vehicle_blueprints = get_actor_blueprints(world, vehicle_filter, vehicle_generation)
+    # Define ego vehicle and smart vehicle blueprint filters
+    ego_vehicle_blueprint_id = "vehicle.mercedes.coupe_2020"
+    smart_vehicle_blueprints = [
+        "vehicle.dodge.charger_2020",
+        "vehicle.dodge.police",
+        "vehicle.ford.crown",
+        "vehicle.lincoln.mkz_2020",
+        "vehicle.mercedes.coupe_2020",
+        "vehicle.mini.cooper_s",
+        "vehicle.nissan.patrol"
+    ]
 
-    logging.info("Available vehicle blueprints before filtering:")
-    for bp in vehicle_blueprints:
-        logging.info(f"Blueprint ID: {bp.id}, Base Type: {bp.get_attribute('base_type').as_str() if bp.has_attribute('base_type') else 'N/A'}")
+    # Get all vehicle blueprints
+    all_blueprints = get_actor_blueprints(world, vehicle_filter, vehicle_generation)
 
-    
-    # Ensure only cars are considered
-    if safe_mode:
-        vehicle_blueprints = [
-                bp for bp in vehicle_blueprints if bp.has_attribute('base_type') and bp.get_attribute('base_type').as_str() == 'car'
-            ]
-    logging.info(f"Filtered vehicle blueprints (cars only): {len(vehicle_blueprints)} found.")
-    
-    if not vehicle_blueprints:
-        logging.error("No car blueprints found! Cannot spawn vehicles.")
+    # Get the blueprint for the ego vehicle
+    ego_vehicle_blueprint = next(
+        (bp for bp in all_blueprints if bp.id == ego_vehicle_blueprint_id), None
+    )
+
+    # Filter blueprints for smart vehicles
+    smart_vehicle_blueprints = [
+        bp for bp in all_blueprints if bp.id in smart_vehicle_blueprints
+    ]
+
+    if not ego_vehicle_blueprint:
+        logging.error("Ego vehicle blueprint not found!")
         return []
-    
+
+    if not smart_vehicle_blueprints:
+        logging.error("No smart vehicle blueprints found!")
+        return []
+
+    # Shuffle spawn points
     spawn_points = world.get_map().get_spawn_points()
-    logging.info(f"Available spawn points before filtering: {len(spawn_points)}")
+    logging.info(f"Available spawn points: {len(spawn_points)}")
     random.shuffle(spawn_points)
-    number_of_vehicles = min(number_of_vehicles, len(spawn_points))
+
+    if len(spawn_points) < number_of_vehicles:
+        logging.warning("Not enough spawn points for the requested number of vehicles.")
+        number_of_vehicles = len(spawn_points)
 
     vehicles = []
     batch = []
-    for i, transform in enumerate(spawn_points[:number_of_vehicles]):
-        blueprint = random.choice(vehicle_blueprints)
+
+    # Spawn the ego vehicle
+    logging.info("Spawning the ego vehicle...")
+    ego_spawn_point = spawn_points.pop(0)
+    ego_vehicle_blueprint.set_attribute('role_name', 'ego_vehicle')
+    batch.append(
+        carla.command.SpawnActor(ego_vehicle_blueprint, ego_spawn_point)
+        .then(carla.command.SetAutopilot(carla.command.FutureActor, True, traffic_manager.get_port()))
+    )
+
+    # Spawn the smart vehicles
+    logging.info("Spawning smart vehicles...")
+    for i, transform in enumerate(spawn_points[:number_of_vehicles - 1]):
+        blueprint = random.choice(smart_vehicle_blueprints)
         if blueprint.has_attribute('color'):
             color = random.choice(blueprint.get_attribute('color').recommended_values)
             blueprint.set_attribute('color', color)
-        blueprint.set_attribute('role_name', 'autopilot')
-        batch.append(carla.command.SpawnActor(blueprint, transform)
-                     .then(carla.command.SetAutopilot(carla.command.FutureActor, True, traffic_manager.get_port())))
+        blueprint.set_attribute('role_name', f'smart_vehicle_{i + 1}')
+        batch.append(
+            carla.command.SpawnActor(blueprint, transform)
+            .then(carla.command.SetAutopilot(carla.command.FutureActor, True, traffic_manager.get_port()))
+        )
 
+    # Apply the batch
     responses = client.apply_batch_sync(batch, True)
     for response in responses:
         if response.error:
-            logging.error(response.error)
+            logging.error(f"Error spawning vehicle: {response.error}")
         else:
             vehicles.append(response.actor_id)
 
-    print("Here!!")
-
+    logging.info("Vehicles successfully spawned.")
     return vehicles
-
 
 def spawn_walkers(client, world, number_of_walkers=20, walker_filter="walker.pedestrian.*", walker_generation="2", seed=None):
     """
