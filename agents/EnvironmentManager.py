@@ -64,31 +64,23 @@ class EnvironmentManager:
     def spawn_with_retries(self, client, traffic_manager, num_vehicles, spawn_retries):
         """
         Attempts to spawn the specified number of vehicles with retries.
-        :param client: CARLA client instance.
-        :param traffic_manager: Traffic manager instance.
-        :param num_vehicles: Total number of vehicles to spawn.
-        :param spawn_retries: Number of retry attempts for spawning.
-        :return: List of successfully spawned vehicles.
+        Captures spawn locations for use in vehicle mapping.
+        :return: List of successfully spawned vehicles and their spawn locations.
         """
         logging.info(f"Starting to spawn {num_vehicles} vehicles with up to {spawn_retries} retries.")
 
-        # Retrieve and log spawn points
         spawn_points = self.filter_spawn_points()
         if not spawn_points:
             logging.error("No spawn points available. Cannot spawn vehicles.")
             return []
 
-        logging.info(f"Found {len(spawn_points)} filtered spawn points.")
-
-        # Retrieve and log vehicle blueprints
         blueprints = self.world.get_blueprint_library().filter('vehicle.*')
         if not blueprints:
             logging.error("No vehicle blueprints available. Cannot spawn vehicles.")
             return []
 
-        logging.info(f"Retrieved {len(blueprints)} vehicle blueprints.")
-
         spawned_vehicles = []
+        spawn_locations = []  # Added to track spawn locations
         for attempt in range(spawn_retries):
             logging.info(f"Spawn attempt {attempt + 1}/{spawn_retries}...")
             for sp in spawn_points:
@@ -101,6 +93,7 @@ class EnvironmentManager:
                     if vehicle:
                         vehicle.set_autopilot(True, traffic_manager.get_port())
                         spawned_vehicles.append(vehicle)
+                        spawn_locations.append(sp.location)  # Capture the spawn location
                         logging.info(f"Successfully spawned vehicle (ID: {vehicle.id}) at location {sp.location}.")
                     else:
                         logging.warning(f"Failed to spawn vehicle at {sp.location}.")
@@ -114,7 +107,7 @@ class EnvironmentManager:
         if len(spawned_vehicles) < num_vehicles:
             logging.warning(f"Only {len(spawned_vehicles)} out of {num_vehicles} vehicles were spawned.")
 
-        return spawned_vehicles
+        return spawned_vehicles, spawn_locations
 
     def cleanup_existing_actors(self, vehicle_mapping=None):
         """
@@ -156,10 +149,11 @@ class EnvironmentManager:
 
         logging.info(f"Cleaned up {len(vehicles)} vehicles and {len(pedestrians)} pedestrians.")
 
-    def designate_ego_and_smart_vehicles(self, vehicles, world, config):
+    def designate_ego_and_smart_vehicles(self, vehicles, spawn_locations, world, config):
         """
         Designates one vehicle as the ego vehicle and the rest as smart vehicles.
         Includes sensors cleanup if a previous simulation was run.
+        Captures initial global positions and includes them in the vehicle mapping.
         :param vehicles: List of vehicle IDs spawned in the simulation.
         :param world: CARLA world object.
         :param config: Configuration object for simulation.
@@ -170,28 +164,49 @@ class EnvironmentManager:
         # Extract actor IDs if the vehicles list contains Vehicle objects
         vehicle_ids = [vehicle.id if hasattr(vehicle, 'id') else vehicle for vehicle in vehicles]
 
-        # Randomly select one vehicle as the ego vehicle
-        ego_vehicle_id = random.choice(vehicle_ids)
+        # Select first vehicle as the ego vehicle
+        ego_vehicle_id = vehicle_ids[0]  # First vehicle is designated as ego
         ego_vehicle = world.get_actor(ego_vehicle_id)
-        vehicle_mapping["ego_veh"] = {"actor_id": ego_vehicle.id, "sensors": []}
-        logging.info(f"Designated vehicle {ego_vehicle_id} as ego_veh.")
+        ego_spawn_location = spawn_locations[0]
+        vehicle_mapping["ego_veh"] = {
+            "actor_id": ego_vehicle.id,
+            "sensors": [],
+            "initial_position": {
+                "x": ego_spawn_location.x,
+                "y": ego_spawn_location.y,
+                "z": ego_spawn_location.z
+            }
+        }
+        logging.info(f"Designated vehicle {ego_vehicle_id} as ego_veh with initial spawn position: {ego_spawn_location}.")
 
         # Assign remaining vehicles as smart vehicles
         smart_vehicle_ids = [vid for vid in vehicle_ids if vid != ego_vehicle_id]
         smart_vehicles = []
-        for idx, smart_vehicle_id in enumerate(smart_vehicle_ids, start=1):
+        for idx, (smart_vehicle_id, spawn_location) in enumerate(zip(smart_vehicle_ids, spawn_locations[1:]), start=1):
+            # Validate if the smart vehicle exists
             smart_vehicle = world.get_actor(smart_vehicle_id)
+            if smart_vehicle is None:
+                logging.warning(f"Smart vehicle with ID {smart_vehicle_id} could not be found. Skipping.")
+                continue
+
             vehicle_label = f"smart_veh_{idx}"
-            vehicle_mapping[vehicle_label] = {"actor_id": smart_vehicle.id, "sensors": []}
+            vehicle_mapping[vehicle_label] = {
+                "actor_id": smart_vehicle.id,
+                "sensors": [],
+                "initial_position": {
+                    "x": spawn_location.x,
+                    "y": spawn_location.y,
+                    "z": spawn_location.z
+                }
+            }
             smart_vehicles.append(smart_vehicle)
-            logging.info(f"Designated vehicle {smart_vehicle_id} as {vehicle_label}.")
+            logging.info(f"Designated vehicle {smart_vehicle_id} as {vehicle_label} with initial spawn position: {spawn_location}.")
 
             # Limit the number of smart vehicles to the desired count
             if idx == config.simulation.num_smart_vehicles:
                 break
 
         return ego_vehicle, smart_vehicles, vehicle_mapping
-
 
     def get_ego_vehicle(self, vehicle_mapping):
         """
