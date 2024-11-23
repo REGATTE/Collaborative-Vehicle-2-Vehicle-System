@@ -4,7 +4,7 @@ import random
 import numpy as np
 import pygame
 
-from Simulation.generate_traffic import spawn_vehicles
+from utils.vehicle_mapping.vehicle_mapping import get_vehicle_blueprints
 
 class EnvironmentManager:
     """
@@ -78,6 +78,22 @@ class EnvironmentManager:
         if not blueprints:
             logging.error("No vehicle blueprints available. Cannot spawn vehicles.")
             return []
+        
+        # Access blueprints 
+        vehicle_blueprints = get_vehicle_blueprints()
+        ego_vehicle_blueprint_id = vehicle_blueprints["ego_vehicle"]
+        smart_vehicle_blueprints = vehicle_blueprints["smart_vehicles"]
+
+        ego_blueprint = next((bp for bp in blueprints if bp.id == ego_vehicle_blueprint_id), None)
+        smart_blueprints = [bp for bp in blueprints if bp.id in smart_vehicle_blueprints]
+
+        if not ego_blueprint:
+            logging.error("Ego vehicle blueprint not found!")
+            return []
+
+        if not smart_blueprints:
+            logging.error("No smart vehicle blueprints found!")
+            return []
 
         spawned_vehicles = []
         spawn_locations = []  # Added to track spawn locations
@@ -86,9 +102,8 @@ class EnvironmentManager:
             for sp in spawn_points:
                 if len(spawned_vehicles) >= num_vehicles:
                     break
-
                 try:
-                    vehicle_bp = random.choice(blueprints)
+                    vehicle_bp = random.choice([ego_blueprint] + smart_blueprints)
                     vehicle = self.world.try_spawn_actor(vehicle_bp, sp)
                     if vehicle:
                         vehicle.set_autopilot(True, traffic_manager.get_port())
