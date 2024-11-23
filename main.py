@@ -8,10 +8,11 @@ import threading
 import time
 
 from agents.controller import ControlObject
+from agents.EnvironmentManager import EnvironmentManager
+from agents.waypoint_manager import WaypointManager
 from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, spawn_walkers, cleanup
 from Simulation.sensors import Sensors
 from Simulation.ego_vehicle import EgoVehicleListener
-from agents.EnvironmentManager import EnvironmentManager
 from utils.config.config_loader import load_config
 from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
@@ -98,7 +99,8 @@ def attach_follow_camera(world, vehicle, camera_transform):
         logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
         return None, None
 
-def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, ego_vehicle, smart_vehicles, lidar_data_buffer):
+def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, 
+              ego_vehicle, smart_vehicles, lidar_data_buffer, waypoint_manager):
     """
     Main game loop for updating the CARLA world and PyGame display.
     """
@@ -142,6 +144,12 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
                 )
             except Exception as e:
                 logging.error(f"Error in proximity mapping: {e}")
+            
+            # Manage waypoints for smart vehicles
+            try:
+                waypoint_manager.manage_all_vehicles(periodic_update_interval=20)  # Update every 20 ticks
+            except Exception as e:
+                logging.error(f"Error in waypoint management: {e}")
 
             pygame.display.flip()  # Update the PyGame display
             control_object.process_control()
@@ -217,11 +225,11 @@ def main():
     env_manager.cleanup_existing_actors()
 
     # Spawn vehicles
-    vehicles = env_manager.spawn_with_retries(
+    vehicles, spawn_locations = env_manager.spawn_with_retries(
         client, traffic_manager, config.simulation.num_vehicles, config.simulation.spawn_retries
     )
     ego_vehicle, smart_vehicles, vehicle_mapping = env_manager.designate_ego_and_smart_vehicles(
-        vehicles, world, config
+        vehicles, spawn_locations, world, config
     )
 
     # Cleanup after designation
@@ -253,6 +261,20 @@ def main():
     # Save vehicle mapping to a JSON file
     save_vehicle_mapping(vehicle_mapping)
 
+    # Initialize WaypointManager with radius-based region
+    region_center = carla.Location(x=0, y=0, z=0)  # Define the center of the operational region
+    region_radius = 50.0  # 50 meters radius
+    waypoint_manager = WaypointManager(
+        world=world,
+        vehicle_mapping=vehicle_mapping,
+        region_center=region_center,
+        region_radius=region_radius
+    )
+
+
+    # Generate initial waypoints for smart vehicles
+    waypoint_manager.generate_initial_waypoints()
+
     #Spawn NPC vehicles and walkers
     traffic_manager.set_global_distance_to_leading_vehicle(config.simulation.npc_global_dist_lv)
     traffic_manager.set_hybrid_physics_mode(True)#Only works if we have vehicle tagged with role_name = 'hero'
@@ -276,7 +298,8 @@ def main():
     try:
         game_loop(
             world, game_display, camera, render_object, control_object,
-            vehicle_mapping, env_manager, ego_vehicle, smart_vehicles, lidar_data_buffer
+            vehicle_mapping, env_manager, ego_vehicle, smart_vehicles, 
+            lidar_data_buffer, waypoint_manager
         )
     except Exception as e:
         logging.error(f"An error occurred during the simulation: {e}")
