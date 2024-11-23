@@ -275,10 +275,6 @@ def main():
         region_radius=region_radius
     )
 
-
-    # Generate initial waypoints for smart vehicles
-    waypoint_manager.generate_initial_waypoints()
-
     #Spawn NPC vehicles and walkers
     traffic_manager.set_global_distance_to_leading_vehicle(config.simulation.npc_global_dist_lv)
     traffic_manager.set_hybrid_physics_mode(True)#Only works if we have vehicle tagged with role_name = 'hero'

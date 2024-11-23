@@ -4,7 +4,67 @@ import socket
 import json
 from threading import Lock
 from math import sqrt
+import time
+import threading
 
+class ConnectionPool:
+    def __init__(self):
+        self.pool = {}
+        self.lock = Lock()
+        self.last_used = {}
+        self.cleanup_thread = None
+
+    def get_connection(self, address):
+        with self.lock:
+            if address in self.pool:
+                return self.pool[address]
+            else:
+                # Create a new connection
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect(address)
+                self.pool[address] = sock
+                self.last_used[address] = time.time()
+                return sock
+
+    def close_connection(self, address):
+        with self.lock:
+            if address in self.pool:
+                self.pool[address].close()
+                del self.pool[address]
+    
+    def cleanup_idle_connections(self, timeout=300):
+        current_time = time.time()
+        with self.lock:
+            for address in list(self.pool.keys()):
+                if current_time - self.last_used[address] > timeout:
+                    logging.info(f"Closing idle connection to {address} after {timeout} seconds of inactivity.")
+                    self.close_connection(address)
+
+    def close_all(self):
+        with self.lock:
+            for sock in self.pool.values():
+                sock.close()
+            self.pool.clear()
+
+    def start_periodic_cleanup(self, interval=60, timeout=300):
+        """
+        Starts a background thread to periodically clean up idle connections.
+        :param interval: Time interval between cleanup runs (in seconds).
+        :param timeout: Idle time (in seconds) before a connection is considered idle.
+        """
+        def cleanup_task():
+            while True:
+                time.sleep(interval)
+                logging.info("Running periodic cleanup of idle connections.")
+                self.cleanup_idle_connections(timeout)
+
+        if not self.cleanup_thread or not self.cleanup_thread.is_alive():
+            self.cleanup_thread = threading.Thread(target=cleanup_task, daemon=True)
+            self.cleanup_thread.start()
+
+connection_pool = ConnectionPool()
+# Start periodic cleanup with an interval of 60 seconds and a timeout of 300 seconds for idle connections
+connection_pool.start_periodic_cleanup(interval=60, timeout=300)
 
 class ProximityMapping:
     def __init__(self, world, radius=20.0):
@@ -75,14 +135,18 @@ class ProximityMapping:
                 return sensor_id
         return None
 
-    def send_data_to_ego(self, ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
+    def send_data_to_ego(self, ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock, max_retries=5, retry_delay=2):
         """
         Sends the full pose data (position, rotation, speed, and LIDAR) from the smart vehicle to the ego vehicle.
+        Implements a retry mechanism to handle transient failures.
         :param ego_address: Address of the ego vehicle.
         :param smart_vehicle_id: ID of the smart vehicle.
         :param smart_vehicle: Smart vehicle actor.
         :param vehicle_mapping: Dictionary containing vehicle and sensor mappings.
         :param lidar_data_buffer: Dictionary for buffering LIDAR data asynchronously.
+        :param lidar_data_lock: Lock object for thread-safe access to LIDAR data.
+        :param max_retries: Maximum number of retries before giving up.
+        :param retry_delay: Delay between retries in seconds.
         """
         transform = smart_vehicle.get_transform()
         position = {
@@ -127,14 +191,24 @@ class ProximityMapping:
             "lidar": lidar_data
         }
 
-        # Send the data to the ego vehicle
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect(ego_address)
+        # Retry mechanism
+        for attempt in range(1, max_retries + 1):
+            try:
+                sock = connection_pool.get_connection(ego_address)
                 sock.sendall(json.dumps(smart_data).encode())
-                logging.info(f"Data successfully sent from {vehicle_label} to Ego Vehicle.")
-        except Exception as e:
-            logging.error(f"Error sending data from {vehicle_label} to Ego Vehicle: {e}")
+                logging.info(f"Data successfully sent to Ego Vehicle at {ego_address} on attempt {attempt}.")
+                return  # Exit on success
+            except Exception as e:
+                logging.warning(f"Attempt {attempt} failed to send data to Ego Vehicle: {e}")
+                connection_pool.close_connection(ego_address)  # Close problematic connection
+                if attempt < max_retries:
+                    logging.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    logging.error(f"All {max_retries} attempts to send data to Ego Vehicle failed. Giving up.")
+
+        # Fallback action if retries fail
+        logging.error(f"Failed to send data for {vehicle_label} to Ego Vehicle after {max_retries} attempts.")
 
     def log_proximity_and_trigger_communication(self, ego_vehicle, smart_vehicles, world, proximity_state, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
         """

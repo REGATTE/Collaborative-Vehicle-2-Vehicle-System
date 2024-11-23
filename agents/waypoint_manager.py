@@ -144,9 +144,18 @@ class WaypointManager:
         Periodically directs smart vehicles toward the ego vehicle, with proximity checks for diversion.
         """
         ego_data = self.vehicle_mapping["ego_veh"]
+        if not ego_data:
+            logging.error("Ego vehicle is not found in the vehicle mapping.")
+            return  # Stop further processing
         ego_actor = self.world.get_actor(ego_data["actor_id"])
+        if not ego_actor:
+            logging.error("Ego vehicle actor could not be retrieved from the CARLA world.")
+            return  # Stop further processing
         ego_location = ego_actor.get_transform().location if ego_actor else None
-
+        if not ego_location:
+            logging.error("Ego vehicle location is None. Skipping waypoint management for this iteration.")
+            return  # Stop further processing
+        
         for vehicle_label in self.vehicle_mapping:
             if vehicle_label == "ego_veh":
                 continue
