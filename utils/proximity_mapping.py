@@ -2,6 +2,7 @@ import logging
 import carla
 import socket
 import json
+from threading import Lock
 from math import sqrt
 
 
@@ -74,7 +75,7 @@ class ProximityMapping:
                 return sensor_id
         return None
 
-    def send_data_to_ego(self, ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer):
+    def send_data_to_ego(self, ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
         """
         Sends the full pose data (position, rotation, speed, and LIDAR) from the smart vehicle to the ego vehicle.
         :param ego_address: Address of the ego vehicle.
@@ -109,7 +110,9 @@ class ProximityMapping:
 
         # Retrieve the LIDAR sensor ID dynamically
         lidar_sensor_id = self.find_lidar_sensor_id(vehicle_label, vehicle_mapping)
-        lidar_data = lidar_data_buffer.get(lidar_sensor_id, [])
+
+        with lidar_data_lock:
+            lidar_data = lidar_data_buffer.get(lidar_sensor_id, [])
         if lidar_data:
             logging.info(f"Sending LIDAR data from {vehicle_label} to Ego Vehicle: {len(lidar_data)} points.")
         else:
@@ -133,7 +136,7 @@ class ProximityMapping:
         except Exception as e:
             logging.error(f"Error sending data from {vehicle_label} to Ego Vehicle: {e}")
 
-    def log_proximity_and_trigger_communication(self, ego_vehicle, smart_vehicles, world, proximity_state, vehicle_mapping, lidar_data_buffer):
+    def log_proximity_and_trigger_communication(self, ego_vehicle, smart_vehicles, world, proximity_state, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
         """
         Logs proximity of smart vehicles to the ego vehicle and triggers communication if necessary.
         """
@@ -150,7 +153,7 @@ class ProximityMapping:
                     )
                     proximity_state[smart_vehicle_id] = True
                     self.send_data_to_ego(
-                        ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer
+                        ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock
                     )
                 else:
                     logging.debug(

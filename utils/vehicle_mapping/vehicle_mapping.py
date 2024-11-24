@@ -46,3 +46,19 @@ def load_vehicle_mapping(file_path=MAPPING_FILE_PATH):
     except Exception as e:
         logging.error(f"Unexpected error loading vehicle mapping: {e}")
     return None
+
+def get_vehicle_blueprints():
+    """
+    Returns predefined vehicle blueprints for the simulation.
+    """
+    return {
+        "ego_vehicle": "vehicle.mercedes.coupe_2020",
+        "smart_vehicles": [
+            "vehicle.dodge.charger_2020",
+            "vehicle.dodge.police",
+            "vehicle.ford.crown",
+            "vehicle.lincoln.mkz_2020",
+            "vehicle.mini.cooper_s",
+            "vehicle.nissan.patrol"
+        ]
+    }
