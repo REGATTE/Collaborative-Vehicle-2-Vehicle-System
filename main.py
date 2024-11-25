@@ -248,14 +248,14 @@ def main():
     # Attach sensors
     sensors = Sensors()
     ego_vehicle_sensors = sensors.attach_sensor_suite(
-        world, ego_vehicle, "ego_veh", lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping
+        world, ego_vehicle, "ego_veh", attached_sensors, ego_vehicle, proximity_mapping
     )
     logging.info(f"Ego vehicle has {len(ego_vehicle_sensors)} sensors attached.")
 
     for idx, smart_vehicle in enumerate(smart_vehicles, start=1):
         vehicle_label = f"smart_veh_{idx}"
         smart_sensors = sensors.attach_sensor_suite(
-            world, smart_vehicle, vehicle_label, lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping
+            world, smart_vehicle, vehicle_label, attached_sensors, ego_vehicle, proximity_mapping
         )
         vehicle_mapping[vehicle_label]["sensors"] = smart_sensors
         logging.info(f"{vehicle_label} has {len(smart_sensors)} sensors attached.")

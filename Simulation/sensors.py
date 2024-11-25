@@ -1,11 +1,44 @@
 import carla
 import logging
 import numpy as np
+from queue import Queue
+from threading import Thread, Lock
+
+"""
+worker function: runs as a daemon thread and processed tasks from the queue, continuously processing LiDAR Data
+thereby handling lidar_data_buffer and lidar_data_lock
+"""
 
 class Sensors:
     def __init__(self):
-        # Initialization logic if needed
-        pass
+        # Initialize the LIDAR data buffer, lock, and processing queue
+        self.lidar_data_buffer = {}
+        self.lidar_data_lock = Lock()
+        self.task_queue = Queue()
+
+        # Start the worker thread for asynchronous processing
+        self.worker_thread = Thread(target=self.worker, daemon=True)
+        self.worker_thread.start()
+    
+    def worker(self):
+        """
+        Worker thread to process LIDAR data asynchronously from the task queue.
+        """
+        while True:
+            try:
+                vehicle_id, data = self.task_queue.get()
+                logging.info(f"Processing LIDAR data for vehicle {vehicle_id}...")
+                points = len(data)  # Example processing: Count points in LIDAR data
+
+                # Update the buffer with the processed data
+                with self.lidar_data_lock:
+                    self.lidar_data_buffer[vehicle_id] = points
+
+                logging.info(f"Processed LIDAR data for vehicle {vehicle_id}: {points} points.")
+                self.task_queue.task_done()
+            except Exception as e:
+                logging.error(f"Error in worker thread: {e}")
+                self.task_queue.task_done()
 
     def sensor_suite(self):  # pylint: disable=no-self-use
         """
@@ -89,33 +122,27 @@ class Sensors:
             logging.error(f"Error attaching LiDAR to Vehicle ID: {vehicle.id}: {e}")
             return None
 
-    def lidar_callback(self, data, vehicle_id, ego_vehicle, proximity_mapping, lidar_data_buffer, lidar_data_lock):
+    def lidar_callback(self, data, vehicle_id, ego_vehicle, proximity_mapping):
         """
         Process LIDAR data for vehicles in proximity.
         """
         try:
-            with lidar_data_lock:
-                # Ensure the vehicle ID is valid
-                if isinstance(vehicle_id, int):
-                    vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
-                else:
-                    logging.error(f"Invalid vehicle ID type: {vehicle_id}. Skipping.")
-                    return
+            # Verify vehicle ID and proximity
+            if not isinstance(vehicle_id, int):
+                logging.error(f"Invalid vehicle ID type: {vehicle_id}. Skipping.")
+                return
 
-                # Check if the vehicle is in proximity
-                nearby_vehicles = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
-                if not nearby_vehicles:
-                    # logging.debug(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
-                    return
+            vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
+            nearby_vehicles = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
+            if not nearby_vehicles:
+                return  # Vehicle not in proximity; skip processing
 
-                # Process LIDAR data
-                points = len(data)  # Example: Count number of LIDAR points
-                lidar_data_buffer[vehicle_id] = points
-                logging.info(f"Vehicle ID {vehicle_id} is {nearby_vehicles[vehicle_id][1]:.2f}m from Ego Vehicle.")
-                logging.debug(f"LIDAR data processed for vehicle {vehicle_id}: {points} points.")
+            # Add the task to the queue for asynchronous processing
+            self.task_queue.put((vehicle_id, data))
+            logging.debug(f"Added LIDAR data processing task for vehicle {vehicle_id} to queue.")
+
         except Exception as e:
             logging.error(f"Error in LIDAR callback for vehicle {vehicle_id}: {e}")
-
 
     def attach_gnss(self, world, vehicle, gnss_config, transform):
         """
@@ -131,7 +158,7 @@ class Sensors:
             logging.error(f"Error attaching GNSS to Vehicle ID: {vehicle.id}: {e}")
             return None
 
-    def attach_sensor_suite(self, world, vehicle, vehicle_label, lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping):
+    def attach_sensor_suite(self, world, vehicle, vehicle_label, attached_sensors, ego_vehicle, proximity_mapping):
         """
         Attaches a full sensor suite (Camera, LiDAR, GNSS) to the vehicle.
         """
@@ -174,7 +201,7 @@ class Sensors:
 
                         # Attach the callback for LIDAR
                         lidar.listen(
-                            lambda data: self.lidar_callback(data, vehicle.id, ego_vehicle, proximity_mapping, lidar_data_buffer, lidar_data_lock)
+                            lambda data: self.lidar_callback(data, vehicle.id, ego_vehicle, proximity_mapping)
                         )
                     else:
                         logging.warning(f"Failed to attach LIDAR to Vehicle ID: {vehicle.id}")
