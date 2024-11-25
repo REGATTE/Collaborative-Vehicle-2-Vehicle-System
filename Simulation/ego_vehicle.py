@@ -68,6 +68,38 @@ class EgoVehicleListener:
             },
             "relative_yaw": relative_yaw
         }
+    
+    def transform_lidar_points(self, lidar_points, relative_position, relative_yaw):
+        relative_yaw_rad = np.radians(relative_yaw)
+        rotation_matrix = np.array([
+            [np.cos(relative_yaw_rad), -np.sin(relative_yaw_rad), 0],
+            [np.sin(relative_yaw_rad),  np.cos(relative_yaw_rad), 0],
+            [0, 0, 1]
+        ])
+
+        transformed_points = []
+        for point in lidar_points:
+            point = np.array([point[0], point[1], point[2]])
+            rotated_point = np.dot(rotation_matrix, point)
+            transformed_point = rotated_point + np.array([
+                relative_position['x'], 
+                relative_position['y'], 
+                relative_position['z']
+            ])
+            transformed_points.append(transformed_point)
+        return transformed_points
+    
+    def combine_lidar_data(self):
+        combined_lidar = []
+        for vehicle_id, lidar_points in self.lidar_data_proximity.items():
+            relative_pose = self.compute_relative_pose(self.vehicle_mapping[vehicle_id])
+            relative_position = relative_pose['relative_position']
+            relative_yaw = relative_pose['relative_yaw']
+            transformed_points = self.transform_lidar_points(lidar_points, relative_position, relative_yaw)
+            combined_lidar.extend(transformed_points)
+
+        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
+        return combined_lidar
 
     def start_listener(self):
         """
@@ -86,7 +118,7 @@ class EgoVehicleListener:
 
     def handle_connection(self, conn):
         try:
-            data = conn.recv(1024)
+            data = conn.recv(4096)
             if data:
                 smart_data = json.loads(data.decode())
                 smart_vehicle_id = smart_data['id']
@@ -107,36 +139,14 @@ class EgoVehicleListener:
                         logging.info(f"  LIDAR Data: {len(lidar_points)} points received.")
                         self.lidar_data_proximity[smart_vehicle_id] = lidar_points
 
-                    if self.ego_vehicle:
-                        relative_pose = self.compute_relative_pose(smart_data)
-                        logging.info(f"  Relative Position: {relative_pose['relative_position']}")
-                        logging.info(f"  Relative Yaw: {relative_pose['relative_yaw']:.2f} degrees")
-
-                    self.combine_lidar_data()
+                    combined_lidar = self.combine_lidar_data()
+                    logging.info(f"Path planning can now use combined LIDAR data with {len(combined_lidar)} points.")
                 else:
                     logging.debug(f"Smart Vehicle {smart_vehicle_id} is not in proximity. Ignoring data.")
         except Exception as e:
             logging.error(f"Error in connection: {e}")
         finally:
             conn.close()
-
-    def combine_lidar_data(self):
-        combined_lidar = []
-        for vehicle_id, lidar_points in self.lidar_data_proximity.items():
-            combined_lidar.extend(lidar_points)
-        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
-
-    def stop_listener(self):
-        self.running = False
-
-    def combine_lidar_data(self):
-        """
-        Combines LIDAR data from all smart vehicles in proximity into a single dataset.
-        """
-        combined_lidar = []
-        for vehicle_id, lidar_points in self.lidar_data_proximity.items():
-            combined_lidar.extend(lidar_points)
-        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
 
     def stop_listener(self):
         """
