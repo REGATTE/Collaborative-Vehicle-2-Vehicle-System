@@ -94,18 +94,24 @@ class Sensors:
         Process LIDAR data for vehicles in proximity.
         """
         try:
+            # logging.debug(f"Received vehicle_id: {vehicle_id} (type: {type(vehicle_id)})")
             with lidar_data_lock:
                 # Ensure the vehicle ID is valid
-                if isinstance(vehicle_id, int):
-                    vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
-                else:
+                if not isinstance(vehicle_id, int):
                     logging.error(f"Invalid vehicle ID type: {vehicle_id}. Skipping.")
+                    return
+
+                vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
+                if not vehicle_actor:
+                    logging.error(f"No actor found for vehicle_id: {vehicle_id}. Skipping.")
                     return
 
                 # Check if the vehicle is in proximity
                 nearby_vehicles = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
-                if not nearby_vehicles:
-                    # logging.debug(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
+                # logging.debug(f"Nearby vehicles: {nearby_vehicles}")
+
+                if not nearby_vehicles or vehicle_id not in nearby_vehicles:
+                    # logging.warning(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
                     return
 
                 # Process LIDAR data
@@ -115,6 +121,7 @@ class Sensors:
                 logging.debug(f"LIDAR data processed for vehicle {vehicle_id}: {points} points.")
         except Exception as e:
             logging.error(f"Error in LIDAR callback for vehicle {vehicle_id}: {e}")
+
 
 
     def attach_gnss(self, world, vehicle, gnss_config, transform):

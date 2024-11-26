@@ -40,7 +40,8 @@ class ProximityMapping:
 
         for vehicle in smart_vehicles:
             try:
-                vehicle_actor = self.world.get_actor(vehicle.id if isinstance(vehicle, carla.Actor) else vehicle)
+                # Use vehicle directly if it's already an actor
+                vehicle_actor = vehicle if isinstance(vehicle, carla.Actor) else self.world.get_actor(vehicle)
 
                 if vehicle_actor.id == ego_vehicle.id:
                     continue
@@ -65,15 +66,21 @@ class ProximityMapping:
 
     def find_lidar_sensor_id(self, vehicle_label, vehicle_mapping):
         """
-        Improved logic to locate the LIDAR ID for the vehicle.
+        Locate the LIDAR ID for the vehicle.
         """
         sensors = vehicle_mapping.get(vehicle_label, {}).get("sensors", [])
         for sensor_id in sensors:
-            # Match against known LIDAR sensor types or specific IDs
-            sensor = self.world.get_actor(sensor_id)
-            if sensor and 'lidar' in sensor.type_id:
-                return sensor_id
-        return None
+            try:
+                if isinstance(sensor_id, carla.Actor):
+                    sensor_id = sensor_id.id  # Extract ID if it's an actor
+                # Fetch the sensor actor from the world
+                sensor = self.world.get_actor(sensor_id)
+                if sensor and 'lidar' in sensor.type_id:
+                    return sensor_id
+            except Exception as e:
+                logging.error(f"Error retrieving sensor ID {sensor_id} for {vehicle_label}: {e}")
+        return None  # Return None if no LIDAR sensor is found
+
 
     def send_data_to_ego(self, ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
         """
@@ -142,6 +149,7 @@ class ProximityMapping:
         """
         # Find vehicles in radius
         vehicles_in_radius = self.find_vehicles_in_radius(ego_vehicle, smart_vehicles)
+        # print(vehicles_in_radius)
         ego_address = ('127.0.0.1', 65432)
 
         for smart_vehicle_id, (smart_vehicle, distance) in vehicles_in_radius.items():
