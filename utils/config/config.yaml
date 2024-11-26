@@ -13,6 +13,7 @@ simulation:
   npc_num_vehicles: 30
   npc_num_walkers: 30
   npc_global_dist_lv: 2.5
+  bev_enable: true
 
 colors:
   ego_vehicle: [255, 0, 0]  # Red for ego vehicle
