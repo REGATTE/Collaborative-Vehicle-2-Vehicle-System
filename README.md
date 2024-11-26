@@ -3,8 +3,13 @@ Vehicle to vehicle communication systems, for intelligent collaborative driving.
 
 ## Setup
 
+activate venv and run
+
 ```bash
 git clone https://github.com/REGATTE/Collaborative-Vehicle-2-Vehicle-System.git
+cd Collaborative-Vehicle-2-Vehicle-System
+python3 setup.py
+pip3 install -r requirements.txt
 ```
 
 ## Simulation

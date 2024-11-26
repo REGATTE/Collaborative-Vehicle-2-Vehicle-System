@@ -67,7 +67,11 @@ class WaypointManager:
             base_location = carla.Location(
                 x=initial_position["x"], y=initial_position["y"], z=initial_position["z"]
             )
-            self.waypoints[label] = self._generate_waypoints(base_location, num_waypoints, spacing)
+            # Ensure each vehicle has a consistent dictionary structure
+            self.waypoints[label] = {
+                "waypoints": self._generate_waypoints(base_location, num_waypoints, spacing),
+                "logged_diversion": False
+            }
             logging.info(f"Generated {num_waypoints} waypoints for {label} starting from {initial_position}.")
 
     def _generate_waypoints(self, base_location, num_waypoints, spacing):
@@ -96,6 +100,9 @@ class WaypointManager:
         If a target_location is provided, generate waypoints leading to it.
         Diverts smart vehicles to independent paths if they are too close to the ego vehicle.
         """
+        if vehicle_label not in self.waypoints:
+            self.waypoints[vehicle_label] = {"waypoints": [], "logged_diversion": False}
+
         vehicle_data = self.vehicle_mapping[vehicle_label]
         actor = self.world.get_actor(vehicle_data["actor_id"])
         if not actor:
@@ -104,29 +111,28 @@ class WaypointManager:
         current_location = actor.get_transform().location
 
         if target_location:
-            # Check if the smart vehicle is too close to the ego vehicle
             distance_to_target = current_location.distance(target_location)
             if distance_to_target <= self.region_radius / 2:
-                # Log diversion events only once per proximity condition
-                if self.waypoints.get(vehicle_label, {}).get("logged_diversion", False) is False:
+                if not self.waypoints[vehicle_label]["logged_diversion"]:
                     logging.info(f"Vehicle {vehicle_label} is too close to the ego vehicle. Diverting to an independent path.")
-                    self.waypoints[vehicle_label] = {"logged_diversion": True}  # Mark as logged
+                    self.waypoints[vehicle_label]["logged_diversion"] = True
 
-                # Generate independent waypoints
-                self.waypoints[vehicle_label] = self._generate_waypoints(current_location, num_waypoints, spacing)
+                self.waypoints[vehicle_label]["waypoints"] = self._generate_waypoints(
+                    current_location, num_waypoints, spacing
+                )
                 return
 
-            # Generate waypoints toward the target location (e.g., ego vehicle)
             direction_vector = target_location - current_location
             normalized_direction = direction_vector / max(direction_vector.length(), 1e-6)  # Avoid division by zero
-            self.waypoints[vehicle_label] = [
+            self.waypoints[vehicle_label]["waypoints"] = [
                 self.map.get_waypoint(current_location + normalized_direction * spacing * i)
                 for i in range(num_waypoints)
             ]
             logging.debug(f"Updated waypoints for {vehicle_label} to move toward target location.")
         else:
-            # Generate waypoints for independent movement
-            self.waypoints[vehicle_label] = self._generate_waypoints(current_location, num_waypoints, spacing)
+            self.waypoints[vehicle_label]["waypoints"] = self._generate_waypoints(
+                current_location, num_waypoints, spacing
+            )
 
     def manage_all_vehicles(self, periodic_update_interval=10):
         """
@@ -159,8 +165,7 @@ class WaypointManager:
         if vehicle_label == "ego_veh":
             return  # Skip assigning waypoints for the ego vehicle
 
-        if vehicle_label not in self.waypoints or not self.waypoints[vehicle_label]:
-            # Throttle warning logs to once every 2 seconds
+        if vehicle_label not in self.waypoints or not self.waypoints[vehicle_label]["waypoints"]:
             current_time = time.time()
             if (
                 vehicle_label not in self.last_warning_time
@@ -169,16 +174,16 @@ class WaypointManager:
                 logging.warning(f"No waypoints available for {vehicle_label}. Generating new waypoints.")
                 self.last_warning_time[vehicle_label] = current_time
 
-            # Generate independent waypoints if none are available
             vehicle_data = self.vehicle_mapping[vehicle_label]
             actor = self.world.get_actor(vehicle_data["actor_id"])
             if actor:
                 current_location = actor.get_transform().location
-                self.waypoints[vehicle_label] = self._generate_waypoints(current_location, num_waypoints=5, spacing=10.0)
+                self.waypoints[vehicle_label]["waypoints"] = self._generate_waypoints(
+                    current_location, num_waypoints=5, spacing=10.0
+                )
             return
 
-        # Get the next waypoint
-        next_waypoint = self.waypoints[vehicle_label].pop(0)
+        next_waypoint = self.waypoints[vehicle_label]["waypoints"].pop(0)
         vehicle_data = self.vehicle_mapping[vehicle_label]
         actor = self.world.get_actor(vehicle_data["actor_id"])
 
@@ -186,16 +191,12 @@ class WaypointManager:
             logging.warning(f"Vehicle {vehicle_label} with ID {vehicle_data['actor_id']} not found.")
             return
 
-        # Smoothly move toward the next waypoint
         target_location = next_waypoint.transform.location
         direction_vector = target_location - actor.get_transform().location
         normalized_direction = direction_vector / max(direction_vector.length(), 1e-6)  # Avoid division by zero
-
-        # Set target velocity for smooth movement
         velocity = normalized_direction * 5.0  # Adjust speed as needed
         actor.set_target_velocity(carla.Vector3D(x=velocity.x, y=velocity.y, z=velocity.z))
 
-        # Log waypoint assignments only every 5 updates
         self.update_counter += 1
         if self.update_counter % 5 == 0:
             logging.info(f"Assigned waypoint to {vehicle_label}.")
