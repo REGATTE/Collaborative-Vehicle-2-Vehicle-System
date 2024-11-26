@@ -3,6 +3,8 @@ import logging
 import random
 import time
 
+from utils.vehicle_mapping.vehicle_mapping import get_vehicle_blueprints
+
 def setup_traffic_manager(client, port, hybrid_mode=True, respawn=False, seed=None):
     """
     Configure and return the Traffic Manager instance.
@@ -33,16 +35,9 @@ def spawn_vehicles(client, world, traffic_manager, number_of_vehicles=10, safe_m
     Ensures only cars are spawned if safe_mode is True.
     """
     # Define ego vehicle and smart vehicle blueprint filters
-    ego_vehicle_blueprint_id = "vehicle.mercedes.coupe_2020"
-    smart_vehicle_blueprints = [
-        "vehicle.dodge.charger_2020",
-        "vehicle.dodge.police",
-        "vehicle.ford.crown",
-        "vehicle.lincoln.mkz_2020",
-        "vehicle.mercedes.coupe_2020",
-        "vehicle.mini.cooper_s",
-        "vehicle.nissan.patrol"
-    ]
+    vehicle_blueprints = get_vehicle_blueprints()
+    ego_vehicle_blueprint_id = vehicle_blueprints["ego_vehicle"]
+    smart_vehicle_blueprints = vehicle_blueprints["smart_vehicles"]
 
     # Get all vehicle blueprints
     all_blueprints = get_actor_blueprints(world, vehicle_filter, vehicle_generation)

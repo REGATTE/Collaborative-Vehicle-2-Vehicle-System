@@ -5,6 +5,7 @@ import numpy as np
 import logging
 import argparse
 import threading
+from threading import Lock
 import time
 
 from agents.controller import ControlObject
@@ -103,7 +104,7 @@ def attach_follow_camera(world, vehicle, camera_transform):
         return None, None
 
 def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, 
-              ego_vehicle, smart_vehicles, lidar_data_buffer, waypoint_manager,birdview_producer = None):
+              ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, waypoint_manager,birdview_producer = None):
     """
     Main game loop for updating the CARLA world and PyGame display.
     """
@@ -146,6 +147,7 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
                     proximity_state,
                     vehicle_mapping,
                     lidar_data_buffer,
+                    lidar_data_lock
                 )
             except Exception as e:
                 logging.error(f"Error in proximity mapping: {e}")
@@ -235,6 +237,7 @@ def main():
     env_manager = EnvironmentManager(world)
 
     # Initialize data buffers and tracking
+    lidar_data_lock = Lock()
     attached_sensors = []
     lidar_data_buffer = {}
 
@@ -277,14 +280,14 @@ def main():
     # Attach sensors
     sensors = Sensors()
     ego_vehicle_sensors = sensors.attach_sensor_suite(
-        world, ego_vehicle, "ego_veh", lidar_data_buffer, attached_sensors, ego_vehicle, proximity_mapping
+        world, ego_vehicle, "ego_veh", lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping
     )
     logging.info(f"Ego vehicle has {len(ego_vehicle_sensors)} sensors attached.")
 
     for idx, smart_vehicle in enumerate(smart_vehicles, start=1):
         vehicle_label = f"smart_veh_{idx}"
         smart_sensors = sensors.attach_sensor_suite(
-            world, smart_vehicle, vehicle_label, lidar_data_buffer, attached_sensors, ego_vehicle, proximity_mapping
+            world, smart_vehicle, vehicle_label, lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping
         )
         vehicle_mapping[vehicle_label]["sensors"] = smart_sensors
         logging.info(f"{vehicle_label} has {len(smart_sensors)} sensors attached.")
@@ -330,8 +333,8 @@ def main():
     try:
         game_loop(
             world, game_display, camera, render_object, control_object,
-            vehicle_mapping, env_manager, ego_vehicle, smart_vehicles, 
-            lidar_data_buffer, waypoint_manager, birdview_producer
+            vehicle_mapping, env_manager, ego_vehicle, smart_vehicles,
+            lidar_data_buffer, lidar_data_lock,  waypoint_manager, birdview_producer
         )
     except Exception as e:
         logging.error(f"An error occurred during the simulation: {e}")
