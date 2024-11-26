@@ -23,7 +23,7 @@ def setup_synchronous_mode(world, traffic_manager, config):
     :param config: Configuration object.
     """
     settings = world.get_settings()
-    settings.synchronous_mode = True
+    settings.synchronous_mode = config.simulation.synchronous_mode
     settings.fixed_delta_seconds = config.simulation.fixed_delta_seconds
     world.apply_settings(settings)
     traffic_manager.set_synchronous_mode(True)
