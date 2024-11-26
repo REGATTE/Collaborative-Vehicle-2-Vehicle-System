@@ -77,17 +77,19 @@ class EgoVehicleListener:
             [0, 0, 1]
         ])
 
-        transformed_points = []
-        for point in lidar_points:
-            point = np.array([point[0], point[1], point[2]])
-            rotated_point = np.dot(rotation_matrix, point)
-            transformed_point = rotated_point + np.array([
-                relative_position['x'], 
-                relative_position['y'], 
-                relative_position['z']
-            ])
-            transformed_points.append(transformed_point)
-        return transformed_points
+        # Convert lidar points to a NumPy array
+        lidar_points = np.array(lidar_points)
+
+        # Apply rotation matrix to all points
+        rotated_points = np.dot(lidar_points, rotation_matrix.T)
+
+        return rotated_points + np.array(
+            [
+                relative_position['x'],
+                relative_position['y'],
+                relative_position['z'],
+            ]
+        )
     
     def combine_lidar_data(self):
         combined_lidar = []
