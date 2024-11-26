@@ -13,3 +13,5 @@ __pycache__/
 
 # Ignore files
 utils/vehicle_mapping/vehicle_mapping.json
+birdview_v2_cache/Carla/Maps/*
+
