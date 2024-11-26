@@ -59,6 +59,10 @@ python3 visualize_ego.py
 
 All the vehicles are autonomous and do not follow a custom path waypoint. 
 
+Ego Car BEV Visualisation
+
+![EGO Car BEV Viz](docs/Images/EGO_Car_BEV.png)
+
 ## Errors 
 
 we have compiled all the errors that we have faced, and how to fix them. The instructions can be found [here](docs/CarlaErrors.md)
