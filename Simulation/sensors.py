@@ -117,6 +117,7 @@ class Sensors:
                 # Process LIDAR data
                 points = len(data)  # Example: Count number of LIDAR points
                 lidar_data_buffer[vehicle_id] = points
+                logging.debug(f"LIDAR data buffer: {lidar_data_buffer}")
                 logging.info(f"Vehicle ID {vehicle_id} is {nearby_vehicles[vehicle_id][1]:.2f}m from Ego Vehicle.")
                 logging.debug(f"LIDAR data processed for vehicle {vehicle_id}: {points} points.")
         except Exception as e:

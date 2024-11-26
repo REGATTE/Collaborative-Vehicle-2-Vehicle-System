@@ -259,7 +259,7 @@ def main():
     env_manager.cleanup_existing_actors(vehicle_mapping=vehicle_mapping)
 
     # Start the ego listener in a separate thread
-    ego_listener = EgoVehicleListener(host='127.0.0.1', port=65432, ego_vehicle=ego_vehicle)
+    ego_listener = EgoVehicleListener(host='127.0.0.1', port=65432, ego_vehicle=ego_vehicle, world=world)
     ego_listener_thread = threading.Thread(target=ego_listener.start_listener, daemon=True)
     ego_listener_thread.start()
 
