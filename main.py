@@ -19,6 +19,9 @@ from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
 from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping
 from utils.proximity_mapping import ProximityMapping
+from carla_birdeye_view import BirdViewProducer, BirdViewCropType, PixelDimensions
+from PIL import Image
+import cv2
 
 class RenderObject:
     """
@@ -101,7 +104,7 @@ def attach_follow_camera(world, vehicle, camera_transform):
         return None, None
 
 def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, 
-              ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, waypoint_manager):
+              ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, waypoint_manager,birdview_producer = None):
     """
     Main game loop for updating the CARLA world and PyGame display.
     """
@@ -117,6 +120,8 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     vehicle_keys = list(vehicle_mapping.keys())
     current_vehicle_index = 0
     active_vehicle_label = vehicle_keys[current_vehicle_index]
+
+    bev_actor = ego_vehicle
 
     try:
         while not crashed:
@@ -156,6 +161,20 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
             pygame.display.flip()  # Update the PyGame display
             control_object.process_control()
 
+            #Birds eye view
+            if birdview_producer :
+                birdview = birdview_producer.produce(
+                agent_vehicle=bev_actor  # carla.Actor (spawned vehicle)
+                )
+                rgb = BirdViewProducer.as_rgb(birdview)
+                #cv2.imshow("BirdView RGB", rgb)
+                pil_image = Image.fromarray(rgb)
+                bgr = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+                cv2.imshow("BirdView BGR", bgr)
+                cv2.waitKey(1)
+
+            
+
             # Handle PyGame events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -176,6 +195,7 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
 
                             camera_transform = carla.Transform(carla.Location(x=-5, z=3), carla.Rotation(pitch=-20))
                             camera, camera_bp = attach_follow_camera(world, new_vehicle, camera_transform)
+                            bev_actor = new_vehicle
                             if not camera:
                                 logging.error(f"Failed to attach camera to {active_vehicle_label}.")
                                 continue
@@ -244,6 +264,18 @@ def main():
     ego_listener_thread.start()
 
     time.sleep(1)
+    
+    birdview_producer = None
+    enableBev = config.simulation.bev_enable
+    if enableBev :
+        birdview_producer = BirdViewProducer(
+        client,  # carla.Client
+        target_size=PixelDimensions(width=150, height=336),
+        pixels_per_meter=4,
+        crop_type=BirdViewCropType.FRONT_AND_REAR_AREA
+        )
+
+    
 
     # Attach sensors
     sensors = Sensors()
@@ -301,8 +333,8 @@ def main():
     try:
         game_loop(
             world, game_display, camera, render_object, control_object,
-            vehicle_mapping, env_manager, ego_vehicle, smart_vehicles, 
-            lidar_data_buffer, lidar_data_lock, waypoint_manager
+            vehicle_mapping, env_manager, ego_vehicle, smart_vehicles,
+            lidar_data_buffer, lidar_data_lock,  waypoint_manager, birdview_producer
         )
     except Exception as e:
         logging.error(f"An error occurred during the simulation: {e}")
