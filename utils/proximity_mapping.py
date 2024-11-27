@@ -179,11 +179,13 @@ class ProximityMapping:
                     )
                     proximity_state[smart_vehicle_id] = True
                     self.proximity_cache[smart_vehicle_id] = {'in_proximity': True}
-                    Thread(
+                    thread = Thread(
                         target=self.stream_data,
                         args=(ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock),
                         daemon=True
-                    ).start
+                    )
+                    thread.start()
+                    logging.info(f"Started streaming thread for Smart Vehicle ID {smart_vehicle_id}.")
                 else:
                     logging.debug(
                         f"Smart Vehicle ID {smart_vehicle_id} is still within proximity of Ego Vehicle (ID: {ego_vehicle.id}) at {distance:.2f}m."
