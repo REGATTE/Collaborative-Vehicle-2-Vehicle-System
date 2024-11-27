@@ -2,9 +2,9 @@ import logging
 import carla
 import socket
 import json
-from threading import Lock
+from threading import Lock, Thread
 from math import sqrt
-
+import time
 
 class ProximityMapping:
     def __init__(self, world, radius=20.0):
@@ -142,6 +142,24 @@ class ProximityMapping:
                 logging.info(f"Data successfully sent from {vehicle_label} to Ego Vehicle.")
         except Exception as e:
             logging.error(f"Error sending data from {vehicle_label} to Ego Vehicle: {e}")
+    
+    def stream_data(self, ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
+        """
+        Continuously sends data from a smart vehicle to the ego vehicle while in proximity.
+        """
+        try:
+            while self.proximity_cache.get(smart_vehicle_id, {}).get('in_proximity', False):
+                self.send_data_to_ego(
+                    ego_address,
+                    smart_vehicle_id,
+                    smart_vehicle,
+                    vehicle_mapping,
+                    lidar_data_buffer,
+                    lidar_data_lock
+                )
+                time.sleep(0.1)  # Adjust interval as needed
+        except Exception as e:
+            logging.error(f"Error during continuous data transmission for {smart_vehicle_id}: {e}")
 
     def log_proximity_and_trigger_communication(self, ego_vehicle, smart_vehicles, world, proximity_state, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
         """
@@ -160,9 +178,12 @@ class ProximityMapping:
                         f"Smart Vehicle ID {smart_vehicle_id} is close to Ego Vehicle (ID: {ego_vehicle.id}) at {distance:.2f}m."
                     )
                     proximity_state[smart_vehicle_id] = True
-                    self.send_data_to_ego(
-                        ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock
-                    )
+                    self.proximity_cache[smart_vehicle_id] = {'in_proximity': True}
+                    Thread(
+                        target=self.stream_data,
+                        args=(ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock),
+                        daemon=True
+                    ).start
                 else:
                     logging.debug(
                         f"Smart Vehicle ID {smart_vehicle_id} is still within proximity of Ego Vehicle (ID: {ego_vehicle.id}) at {distance:.2f}m."
@@ -171,9 +192,8 @@ class ProximityMapping:
                 logging.error(f"Error processing vehicle {smart_vehicle_id}: {e}")
 
         # Clean up proximity state for vehicles no longer in range
-        proximity_state = {
-            vid: state for vid, state in proximity_state.items()
-            if vid in vehicles_in_radius
-        }
-
-        return proximity_state
+        for vid in list(proximity_state.keys()):
+            if vid not in vehicles_in_radius:
+                self.proximity_cache[vid] = {'in_proximity': False}
+                proximity_state.pop(vid, None)
+                logging.info(f"Smart Vehicle ID {vid} has exited proximity of the Ego Vehicle.")

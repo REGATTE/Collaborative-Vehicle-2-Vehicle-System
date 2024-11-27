@@ -159,82 +159,99 @@ class EgoVehicleListener:
 
     def handle_connection(self, conn):
         """
-        Handles incoming connections from smart vehicles.
+        Handles incoming connections from smart vehicles and ensures continuous processing of data.
         """
         try:
-            data = conn.recv(4096)
-            if not data:
-                logging.warning("Received empty data. Ignoring connection.")
-                return
+            while True:
+                data = conn.recv(4096)
+                if not data:
+                    logging.warning("Received empty data. Closing connection.")
+                    break
 
-            smart_data = json.loads(data.decode())
-            smart_vehicle_id = smart_data['id']
-            vehicle_label = self.get_vehicle_label(smart_vehicle_id)
+                try:
+                    smart_data = json.loads(data.decode())
+                    smart_vehicle_id = smart_data.get('id')
 
-            if not vehicle_label:
-                logging.warning(f"Smart Vehicle ID {smart_vehicle_id} not found in mapping.")
-                return
+                    if not smart_vehicle_id:
+                        logging.warning("Smart vehicle ID missing in received data.")
+                        continue
 
-            logging.info(f"Received data from Smart Vehicle {vehicle_label} (ID: {smart_vehicle_id}).")
+                    vehicle_label = self.get_vehicle_label(smart_vehicle_id)
 
-            # Build a list of valid actors for proximity mapping
-            actors = []
-            for label, data in self.vehicle_mapping.items():
-                actor_id = data.get("actor_id")
-                if actor_id is None:
-                    # logging.warning(f"No actor_id found for vehicle {label}. Skipping.")
-                    continue
+                    if not vehicle_label:
+                        logging.warning(f"Smart Vehicle ID {smart_vehicle_id} not found in mapping.")
+                        continue
 
-                actor = self.world.get_actor(actor_id)
-                if actor is None:
-                    logging.warning(f"Actor with ID {actor_id} (label: {label}) not found in CARLA world.")
-                else:
-                    logging.info(f"Actor with ID {actor_id} found: {actor.type_id}")
-                    logging.debug(f"Actor Details: {actor.attributes}")  # Log actor attributes for additional details
-                    actors.append(actor)
+                    logging.info(f"Received data from Smart Vehicle {vehicle_label} (ID: {smart_vehicle_id}).")
 
-            if not actors:
-                logging.error("No valid actors found in the CARLA world.")
-                return
+                    # Validate proximity and process data if in range
+                    actors = self._get_all_valid_actors()
+                    if not actors:
+                        logging.error("No valid actors found in the CARLA world.")
+                        break
 
-            vehicles_in_radius = self.proximity_mapping.find_vehicles_in_radius(self.ego_vehicle, actors)
-            # Log the vehicles in radius
-            if vehicles_in_radius:
-                logging.info(f"Vehicles in radius: {vehicles_in_radius}")
-            else:
-                logging.info("No vehicles in proximity of the Ego Vehicle.")
-
-            if smart_vehicle_id not in vehicles_in_radius:
-                logging.debug(f"Smart Vehicle {vehicle_label} is not in proximity. Ignoring data.")
-                return
-
-            self._process_vehicle_data(vehicle_label, smart_data)
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to decode JSON data: {e}")
+                    vehicles_in_radius = self.proximity_mapping.find_vehicles_in_radius(self.ego_vehicle, actors)
+                    if smart_vehicle_id in vehicles_in_radius:
+                        self._process_vehicle_data(vehicle_label, smart_data)
+                    else:
+                        logging.debug(f"Smart Vehicle {vehicle_label} is not in proximity. Ignoring data.")
+                except json.JSONDecodeError as e:
+                    logging.error(f"Failed to decode JSON data: {e}")
+                except Exception as e:
+                    logging.error(f"Error while handling data from smart vehicle: {e}")
         except Exception as e:
             logging.error(f"Error in connection: {e}")
         finally:
             conn.close()
 
+    def _get_all_valid_actors(self):
+        """
+        Retrieves all valid actors from the vehicle mapping for proximity calculations.
+        """
+        actors = []
+        for label, data in self.vehicle_mapping.items():
+            actor_id = data.get("actor_id")
+            if actor_id is None:
+                continue
+
+            actor = self.world.get_actor(actor_id)
+            if actor:
+                actors.append(actor)
+            else:
+                logging.warning(f"Actor with ID {actor_id} (label: {label}) not found in CARLA world.")
+        return actors
+
     def _process_vehicle_data(self, vehicle_label, smart_data):
         """
-        Processes data received from a smart vehicle.
+        Processes data received from a smart vehicle, dynamically updating combined LiDAR data.
         """
-        logging.info(f"Processing data from Smart Vehicle {vehicle_label}:")
-
-        lidar_points = self.lidar_data_proximity.get(vehicle_label, [])
-        if not lidar_points:
-            logging.warning(f"No LIDAR data available for Smart Vehicle {vehicle_label}.")
-            return
-
-        logging.info(f"  LIDAR Data: {len(lidar_points)} points received.")
-        self.lidar_data_proximity[vehicle_label] = lidar_points
-
         try:
+            # Process received LiDAR points
+            lidar_points = smart_data.get('lidar', [])
+            if not lidar_points:
+                logging.warning(f"No LIDAR data available in the received data for {vehicle_label}.")
+                return
+
+            logging.info(f"Received {len(lidar_points)} LIDAR points from {vehicle_label}.")
+
+            # Update proximity data
+            self.lidar_data_proximity[vehicle_label] = lidar_points
+
+            # Combine all received LiDAR data for path planning
             combined_lidar = self.combine_lidar_data()
             logging.info(f"Path planning can now use combined LIDAR data with {len(combined_lidar)} points.")
+
+            # Trigger path planning or additional logic as needed
+            self.trigger_path_planning(combined_lidar)
         except Exception as e:
-            logging.error(f"Error combining LIDAR data: {e}")
+            logging.error(f"Error processing data for {vehicle_label}: {e}")
+
+    def trigger_path_planning(self, combined_lidar):
+        """
+        Placeholder for path planning logic using combined LIDAR data.
+        """
+        # Implement path planning logic here
+        logging.info(f"Triggering path planning with {len(combined_lidar)} combined LIDAR points.")
 
     def stop_listener(self):
         """
