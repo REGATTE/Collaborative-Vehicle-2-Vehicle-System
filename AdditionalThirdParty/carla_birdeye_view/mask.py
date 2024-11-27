@@ -284,6 +284,9 @@ class MapMaskGenerator:
 
     def vehicles_mask(self, vehicles: List[carla.Actor]) -> Mask:
         canvas = self.make_empty_mask()
+        smart_vehicle_canvas = self.make_empty_mask()
+        ego_vehicle_canvas = self.make_empty_mask()
+        
         for veh in vehicles:
             bb = veh.bounding_box.extent
             corners = [
@@ -296,13 +299,24 @@ class MapMaskGenerator:
             veh.get_transform().transform(corners)
             corners = [self.location_to_pixel(loc) for loc in corners]
 
-            if veh.attributes["role_name"] == "hero":
-                color = COLOR_OFF
+            # if "ego_vehicle" in veh.attributes.get("role_name", ""):
+            #     print("Ego found -------------------------------------")
+            #     continue
+            
+            # Check for specific role_name values
+            role_name = veh.attributes.get("role_name", "")
+            if "ego_vehicle" in role_name:
+                # Fill ego_vehicle canvas
+                cv.fillPoly(img=ego_vehicle_canvas, pts=np.int32([corners]), color=COLOR_ON)
+            elif "smart_vehicle_" in role_name:
+                # Fill smart_vehicle canvas
+                cv.fillPoly(img=smart_vehicle_canvas, pts=np.int32([corners]), color=COLOR_ON)
             else:
-                color = COLOR_ON
+                # Fill general vehicles canvas
+                color = COLOR_OFF if role_name == "hero" else COLOR_ON
+                cv.fillPoly(img=canvas, pts=np.int32([corners]), color=color)
 
-            cv.fillPoly(img=canvas, pts=np.int32([corners]), color=color)
-        return canvas
+        return canvas, smart_vehicle_canvas, ego_vehicle_canvas
 
 
     def pedestrians_mask(self, pedestrians: List[carla.Actor]) -> Mask:
