@@ -98,7 +98,12 @@ class EgoVehicleListener:
     
     def transform_lidar_points(self, lidar_points, relative_position, relative_yaw):
         """
-        Transforms LIDAR points from a smart vehicle to the ego vehicle's coordinate frame.
+        Transforms LIDAR points (in XYZI format) from a smart vehicle to the ego vehicle's coordinate frame.
+
+        :param lidar_points: List or NumPy array of LIDAR points in XYZI format.
+        :param relative_position: Dictionary with keys 'x', 'y', 'z' indicating the translation vector.
+        :param relative_yaw: Relative yaw angle in degrees.
+        :return: Transformed LIDAR points in XYZI format.
         """
         relative_yaw_rad = np.radians(relative_yaw)
         rotation_matrix = np.array([
@@ -110,17 +115,23 @@ class EgoVehicleListener:
         # Convert lidar points to a NumPy array
         lidar_points = np.array(lidar_points)
 
-        # Apply rotation matrix to all points
-        rotated_points = np.dot(lidar_points, rotation_matrix.T)
+        # Split LIDAR data into XYZ and I (Intensity)
+        xyz_points = lidar_points[:, :3]  # Extract X, Y, Z
+        intensity = lidar_points[:, 3]    # Extract Intensity (I)
 
-        return rotated_points + np.array(
-            [
-                relative_position['x'],
-                relative_position['y'],
-                relative_position['z'],
-            ]
-        )
-    
+        # Apply rotation matrix to all points
+        rotated_points = np.dot(xyz_points, rotation_matrix.T)
+
+        # Add translation (relative position)
+        translated_points = rotated_points + np.array([
+            relative_position['x'],
+            relative_position['y'],
+            relative_position['z']
+        ])
+
+        # Combine the transformed XYZ with the original intensity
+        return np.hstack((translated_points, intensity.reshape(-1, 1)))
+
     def combine_lidar_data(self):
         """
         Combines LIDAR data from all nearby smart vehicles into a single dataset.
@@ -132,15 +143,29 @@ class EgoVehicleListener:
                 continue
 
             try:
+                # convert list to numpy array for reshaping and manipulation
+                lidar_array = np.array(lidar_points, dtype=np.float32)
+                #validate that the data is in XYZI format
+                if len(lidar_array) % 4 != 0:
+                    logging.error(f"LIDAR data size {len(lidar_array)} is not divisible by 4. Skipping vehicle {vehicle_label}.")
+                    continue
+                # Reshape to (N, 4) for XYZI format
+                lidar_array = lidar_array.reshape(-1, 4)  # Each row is [X, Y, Z, I]
+                logging.info(f"LIDAR data for vehicle {vehicle_label} reshaped to {lidar_array.shape[0]} points (XYZI format).")
+
+                # compute relative pose
                 relative_pose = self.compute_relative_pose(vehicle_label)
                 relative_position = relative_pose["relative_position"]
                 relative_yaw = relative_pose["relative_yaw"]
-                transformed_points = self.transform_lidar_points(lidar_points, relative_position, relative_yaw)
+
+                # Transform lidar points
+                transformed_points = self.transform_lidar_points(lidar_array, relative_position, relative_yaw)
                 combined_lidar.extend(transformed_points)
             except Exception as e:
                 logging.error(f"Error processing LIDAR data for vehicle {vehicle_label}: {e}")
 
         logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
+        
         return combined_lidar
 
     def start_listener(self):
@@ -197,7 +222,6 @@ class EgoVehicleListener:
                         if lidar_data:
                             try:
                                 decompressed_lidar_data = data_decompressor.decompress(lidar_data)
-                                logging.info(f"Type of lidar_data before serialization: {type(decompressed_lidar_data)}")
                                 smart_data['lidar'] = decompressed_lidar_data
                                 logging.info(f"LIDAR data decompressed successfully for Smart Vehicle {vehicle_label}.")
                             except Exception as e:
@@ -205,7 +229,6 @@ class EgoVehicleListener:
                                 continue
                         else:
                             logging.warning(f"No LIDAR data found for Smart Vehicle {vehicle_label}.")
-
                         logging.info(f"Processing data from Smart Vehicle {vehicle_label} (ID: {smart_vehicle_id}).")
 
                         # Process data only if the vehicle is in proximity
@@ -284,7 +307,7 @@ class EgoVehicleListener:
                 logging.warning(f"Actor with ID {actor_id} (label: {label}) not found in CARLA world.")
             else:
                 logging.info(f"Actor with ID {actor_id} found: {actor.type_id}")
-                logging.debug(f"Actor Details: {actor.attributes}")  # Log actor attributes for additional details
+                # logging.debug(f"Actor Details: {actor.attributes}")  # Log actor attributes for additional details
                 actors.append(actor)
         return actors
 
