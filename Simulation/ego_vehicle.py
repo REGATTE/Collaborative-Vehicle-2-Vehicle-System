@@ -6,6 +6,7 @@ import numpy as np
 
 from utils.proximity_mapping import ProximityMapping
 from utils.vehicle_mapping.vehicle_mapping import load_vehicle_mapping
+from utils.compression import DataCompressor
 
 class EgoVehicleListener:
     def __init__(self, host='127.0.0.1', port=65432, ego_vehicle=None, world=None):
@@ -166,15 +167,16 @@ class EgoVehicleListener:
         Handles incoming connections from smart vehicles and ensures continuous processing of data.
         """
         logging.info(f"handle_connection started for {addr}.")
+        data_decompressor = DataCompressor()
         try:
             with conn:
                 while self.running:
                     try:
-                        data = conn.recv(4096)
+                        data = conn.recv(32768) # accpets 32Kb
                         if not data:
                             logging.warning(f"No data received from {addr}. Closing connection.")
                             break
-                        logging.debug(f"Raw data received from {addr}: {data.decode('utf-8')}")
+                        # logging.debug(f"Raw data received from {addr}: {data.decode('utf-8')}")
 
                         # Parse the received JSON data
                         smart_data = json.loads(data.decode('utf-8'))
@@ -189,6 +191,20 @@ class EgoVehicleListener:
                         if not vehicle_label:
                             logging.warning(f"Smart Vehicle ID {smart_vehicle_id} not found in mapping.")
                             continue
+
+                        #decompress lidar data
+                        lidar_data = smart_data.get('lidar')
+                        if lidar_data:
+                            try:
+                                decompressed_lidar_data = data_decompressor.decompress(lidar_data)
+                                logging.info(f"Type of lidar_data before serialization: {type(decompressed_lidar_data)}")
+                                smart_data['lidar'] = decompressed_lidar_data
+                                logging.info(f"LIDAR data decompressed successfully for Smart Vehicle {vehicle_label}.")
+                            except Exception as e:
+                                logging.error(f"Error decompressing LIDAR data for Smart Vehicle {vehicle_label}: {e}")
+                                continue
+                        else:
+                            logging.warning(f"No LIDAR data found for Smart Vehicle {vehicle_label}.")
 
                         logging.info(f"Processing data from Smart Vehicle {vehicle_label} (ID: {smart_vehicle_id}).")
 

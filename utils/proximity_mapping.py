@@ -6,6 +6,8 @@ from threading import Lock, Thread
 from math import sqrt
 import time
 
+from utils.compression import DataCompressor
+
 class ProximityMapping:
     def __init__(self, world, radius=20.0):
         """
@@ -117,11 +119,26 @@ class ProximityMapping:
 
         # Retrieve the LIDAR sensor ID dynamically
         lidar_sensor_id = self.find_lidar_sensor_id(vehicle_label, vehicle_mapping)
-
+        data_compressor = DataCompressor()
         with lidar_data_lock:
             lidar_data = lidar_data_buffer.get(lidar_sensor_id, [])
         if lidar_data:
+            if isinstance(lidar_data, memoryview):
+                lidar_data = list(lidar_data)
+            # Log the type of lidar_data before serialization
+            # logging.info(f"Type of lidar_data before serialization: {type(lidar_data)}")
             logging.info(f"Sending LIDAR data from {vehicle_label} to Ego Vehicle: {len(lidar_data)} points.")
+            # Log the original size of lidar_data
+            original_size = len(json.dumps(lidar_data).encode('utf-8'))
+            logging.info(f"Original LIDAR data size: {original_size} bytes.")
+            # Compress the LIDAR data
+            compressed_lidar_data = data_compressor.compress(lidar_data)
+            if compressed_lidar_data:
+                compressed_size = len(compressed_lidar_data.encode('utf-8'))
+                logging.info(f"Compressed LIDAR data size: {compressed_size} bytes.")
+                lidar_data = compressed_lidar_data
+            else:
+                logging.error(f"Failed to compress LIDAR data for {vehicle_label}.")
         else:
             logging.warning(f"No LIDAR data available for {vehicle_label}.")
 
