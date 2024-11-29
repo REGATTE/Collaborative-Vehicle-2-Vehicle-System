@@ -173,8 +173,6 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
                 cv2.imshow("BirdView BGR", bgr)
                 cv2.waitKey(1)
 
-            
-
             # Handle PyGame events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -259,7 +257,14 @@ def main():
     env_manager.cleanup_existing_actors(vehicle_mapping=vehicle_mapping)
 
     # Start the ego listener in a separate thread
-    ego_listener = EgoVehicleListener(host='127.0.0.1', port=65432, ego_vehicle=ego_vehicle, world=world)
+    ego_listener = EgoVehicleListener(
+        host='127.0.0.1', 
+        port=65432, 
+        ego_vehicle=ego_vehicle, 
+        world=world,
+        lidar_data_buffer=lidar_data_buffer,
+        lidar_data_lock=lidar_data_lock
+    )
     ego_listener_thread = threading.Thread(target=ego_listener.start_listener, daemon=True)
     ego_listener_thread.start()
 

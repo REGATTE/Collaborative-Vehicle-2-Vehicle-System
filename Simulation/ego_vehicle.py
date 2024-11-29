@@ -3,31 +3,36 @@ import threading
 import logging
 import json
 import numpy as np
+import time
 
 from utils.proximity_mapping import ProximityMapping
 from utils.vehicle_mapping.vehicle_mapping import load_vehicle_mapping
 from utils.compression import DataCompressor
 
 class EgoVehicleListener:
-    def __init__(self, host='127.0.0.1', port=65432, ego_vehicle=None, world=None):
+    def __init__(self, lidar_data_buffer, lidar_data_lock, host='127.0.0.1', port=65432, ego_vehicle=None, world=None):
         """
         Initializes the ego vehicle listener.
+        :param lidar_data_buffer: Shared buffer for storing LIDAR data.
+        :param lidar_data_lock: Lock for synchronizing access to the LIDAR data buffer.
         :param host: Host address for the listener.
         :param port: Port for the listener.
         :param ego_vehicle: Ego vehicle actor.
         :param world: CARLA world instance.
-        :param vehicle_mapping: Vehicle mapping dictionary.
         """
         if world is None:
             raise ValueError("CARLA world instance is required.")
+        
         self.host = host
         self.port = port
         self.ego_vehicle = ego_vehicle
         self.world = world
-        self.vehicle_mapping = load_vehicle_mapping()
+        self.vehicle_mapping = load_vehicle_mapping()  # Load vehicle mapping
         self.lidar_data_proximity = {}  # Store LIDAR data for vehicles in proximity
         self.proximity_mapping = ProximityMapping(world, radius=20.0)  # Use proximity mapping
         self.running = True  # Flag to safely terminate thread
+        self.lidar_data_lock = lidar_data_lock  # Shared lock for thread safety
+        self.lidar_data_buffer = lidar_data_buffer  # Shared buffer for LIDAR data
     
     def get_vehicle_id(self, label):
         """
@@ -137,6 +142,30 @@ class EgoVehicleListener:
         Combines LIDAR data from all nearby smart vehicles into a single dataset.
         """
         combined_lidar = []
+
+        # Access ego vehicle lidar data
+        ego_lidar_id = 32 # force mapping for testing
+        logging.info(f"combine_lidar_data: Attempting to access data for Sensor ID {ego_lidar_id}.")
+        
+        with self.lidar_data_lock:
+            ego_lidar_data = self.lidar_data_buffer.get(ego_lidar_id, [])
+        # convert to list from memoryview
+        if isinstance(ego_lidar_data, memoryview):
+            logging.info("converting ego lidar data to list")
+            ego_lidar_data = list(ego_lidar_data)
+        
+        if not ego_lidar_data:
+            logging.warning(f"No LIDAR data found for Sensor ID {ego_lidar_id}.")
+        else:
+            try:
+                # process and adde ego lidar data
+                lidar_array = np.frombuffer(bytearray(ego_lidar_data), dtype=np.float32).reshape(-1, 4)
+                combined_lidar.extend(lidar_array)
+                logging.info(f"Ego LIDAR data processed with {len(lidar_array)} points.")
+            except Exception as e:
+                logging.error(f"Error processing ego LIDAR data: {e}")
+        
+        # Process smart vehicles' LIDAR data
         for vehicle_label, lidar_points in self.lidar_data_proximity.items():
             if vehicle_label not in self.vehicle_mapping:
                 logging.warning(f"Vehicle label {vehicle_label} not found in vehicle mapping. Skipping.")
@@ -195,16 +224,25 @@ class EgoVehicleListener:
         data_decompressor = DataCompressor()
         try:
             with conn:
+                buffer = b""
                 while self.running:
                     try:
-                        data = conn.recv(32768) # accpets 32Kb
-                        if not data:
-                            logging.warning(f"No data received from {addr}. Closing connection.")
+                        chunk = conn.recv(49152) # accpets 48Kb
+                        if not chunk:
+                            if buffer:
+                                logging.warning(f"Incomplete data received from {addr}. Closing connection.")
+                            else:
+                                logging.warning(f"No data received from {addr}. Closing connection.")
                             break
-                        # logging.debug(f"Raw data received from {addr}: {data.decode('utf-8')}")
 
-                        # Parse the received JSON data
-                        smart_data = json.loads(data.decode('utf-8'))
+                        buffer += chunk  # Accumulate chunks
+                        try:
+                            # Parse the received JSON data
+                            smart_data = json.loads(buffer.decode('utf-8'))
+                            buffer = b""
+                        except json.JSONDecodeError:
+                            # If JSON is incomplete, wait for more data
+                            continue                        
                         smart_vehicle_id = smart_data.get('id')
 
                         if not smart_vehicle_id:
