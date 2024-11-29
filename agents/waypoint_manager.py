@@ -171,7 +171,7 @@ class WaypointManager:
                 vehicle_label not in self.last_warning_time
                 or current_time - self.last_warning_time[vehicle_label] > 2
             ):
-                logging.warning(f"No waypoints available for {vehicle_label}. Generating new waypoints.")
+                # logging.warning(f"No waypoints available for {vehicle_label}. Generating new waypoints.")
                 self.last_warning_time[vehicle_label] = current_time
 
             vehicle_data = self.vehicle_mapping[vehicle_label]
@@ -198,5 +198,5 @@ class WaypointManager:
         actor.set_target_velocity(carla.Vector3D(x=velocity.x, y=velocity.y, z=velocity.z))
 
         self.update_counter += 1
-        if self.update_counter % 5 == 0:
-            logging.info(f"Assigned waypoint to {vehicle_label}.")
+        # if self.update_counter % 5 == 0:
+            # logging.info(f"Assigned waypoint to {vehicle_label}.")

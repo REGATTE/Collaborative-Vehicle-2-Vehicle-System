@@ -19,6 +19,7 @@ class ProximityMapping:
         self.radius = radius
         self.proximity_cache = {}
         logging.info(f"ProximityMapping initialized with radius: {self.radius} meters.")
+        logging.info("=========================================")
 
     def calculate_distance(self, location1, location2):
         """
