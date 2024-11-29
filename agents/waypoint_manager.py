@@ -128,7 +128,7 @@ class WaypointManager:
                 self.map.get_waypoint(current_location + normalized_direction * spacing * i)
                 for i in range(num_waypoints)
             ]
-            logging.debug(f"Updated waypoints for {vehicle_label} to move toward target location.")
+            #logging.debug(f"Updated waypoints for {vehicle_label} to move toward target location.")
         else:
             self.waypoints[vehicle_label]["waypoints"] = self._generate_waypoints(
                 current_location, num_waypoints, spacing

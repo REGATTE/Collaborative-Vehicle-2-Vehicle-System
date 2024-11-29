@@ -12,6 +12,17 @@ fi
 
 cd
 
+# Start a terminal to monitor system usage
+gnome-terminal -- bash -c "
+cd carla_simulator/
+source carla-env/bin/activate
+cd ~/Desktop/Self-Driving-Stack/Project/Collaborative-Vehicle-2-Vehicle-System/utils.
+python3 monitor_usgae.py
+exec bash
+" &  # Run in background
+wait $!  # Wait for the terminal process to start
+sleep 10  # Wait for 10 seconds
+
 # Start the first terminal and run CARLA simulator
 gnome-terminal -- bash -c "
 cd carla_simulator/

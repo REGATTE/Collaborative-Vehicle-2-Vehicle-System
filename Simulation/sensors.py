@@ -88,42 +88,86 @@ class Sensors:
         except Exception as e:
             logging.error(f"Error attaching LiDAR to Vehicle ID: {vehicle.id}: {e}")
             return None
-
-    def lidar_callback(self, data, vehicle_id, ego_vehicle, proximity_mapping, lidar_data_buffer, lidar_data_lock):
+        
+    def ego_lidar_callback(self, data, sensor_id, lidar_data_buffer, lidar_data_lock):
         """
-        Process LIDAR data for vehicles in proximity.
+        Callback function to process LIDAR data for the ego vehicle, keyed by sensor ID.
         """
         try:
-            # logging.debug(f"Received vehicle_id: {vehicle_id} (type: {type(vehicle_id)})")
             with lidar_data_lock:
-                # Ensure the vehicle ID is valid
-                if not isinstance(vehicle_id, int):
-                    logging.error(f"Invalid vehicle ID type: {vehicle_id}. Skipping.")
+                # Store raw LIDAR data, keyed by sensor ID
+                points = data.raw_data  # Access raw LIDAR data
+                lidar_data_buffer[sensor_id] = points  # Use sensor ID as the key
+                # logging.info(f"Ego LIDAR data stored for Sensor ID {sensor_id}: {len(points)} bytes.")
+        except Exception as e:
+            logging.error(f"Error in ego_lidar_callback for Sensor ID {sensor_id}: {e}")
+        except AttributeError as e:
+            logging.error(f"AttributeError in eg_lidar_callback for Sensor ID {sensor_id}: {e}")
+        except KeyError as e:
+            logging.error(f"KeyError in eg_lidar_callback for Sensor ID {sensor_id}: {e}")
+        except Exception as e:
+            logging.error(f"Unhandled error in eg_lidar_callback for Sensor ID {sensor_id}: {e}")
+
+    def lidar_callback(self, data, vehicle_id, sensor_id, ego_vehicle, proximity_mapping, lidar_data_buffer, lidar_data_lock):
+        """
+        Process LIDAR data for sensors in proximity, keyed by sensor ID.
+        """
+        try:
+            with lidar_data_lock:
+                # Ensure sensor ID is valid
+                if not isinstance(sensor_id, int):
+                    logging.error(f"Invalid sensor ID: {sensor_id}. Skipping.")
                     return
 
+                # Check if the vehicle associated with this sensor is in proximity
                 vehicle_actor = proximity_mapping.world.get_actor(vehicle_id)
                 if not vehicle_actor:
-                    logging.error(f"No actor found for vehicle_id: {vehicle_id}. Skipping.")
+                    logging.error(f"No actor found for vehicle ID: {vehicle_id}. Skipping.")
                     return
-
-                # Check if the vehicle is in proximity
-                nearby_vehicles = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
-                # logging.debug(f"Nearby vehicles: {nearby_vehicles}")
-
-                if not nearby_vehicles or vehicle_id not in nearby_vehicles:
-                    # logging.warning(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
+                # Check if the vehicle associated with this sensor is in proximity
+                vehicles_in_radius = proximity_mapping.find_vehicles_in_radius(ego_vehicle, [vehicle_actor])
+                if vehicle_id not in vehicles_in_radius:
+                    #logging.debug(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
                     return
+                # Process and store LIDAR data
+                points = data.raw_data  # Access raw LIDAR data
+                lidar_data_buffer[sensor_id] = points  # Key buffer by sensor ID
+                # Log the processed data
+                logging.info(
+                    # f"LIDAR data buffer: {lidar_data_buffer}"
+                    # f"Processed LIDAR data for Sensor ID {sensor_id} "
+                    f"(Vehicle ID {vehicle_id}): {len(points)} points. "
+                    f"Distance to Ego: {vehicles_in_radius[vehicle_id][1]:.2f}m."
+                )
+            
+            """# Log all keys and first 10 points of each dataset in lidar_data_buffer
+            with lidar_data_lock:
+                logging.info("Current LIDAR data buffer state:")
+                for key, value in lidar_data_buffer.items():
+                    logging.info(f"Sensor ID {key}: Data type is {type(value)}")
+                    try:
+                        if isinstance(value, memoryview):
+                            logging.info(f"Sensor ID {key}: Converting memoryview to NumPy array.")
+                            points_array = np.frombuffer(value, dtype=np.float32).reshape(-1, 4)
+                        elif isinstance(value, bytes):
+                            points_array = np.frombuffer(value, dtype=np.float32).reshape(-1, 4)
+                        else:
+                            logging.warning(f"Sensor ID {key}: Data type not recognized, skipping detailed log.")
+                            continue
+                        
+                        # Log the first 10 points
+                        logging.info(
+                            f"Sensor ID {key}: First 10 points: {points_array[:10].tolist() if len(points_array) >= 10 else points_array.tolist()}"
+                        )
+                    except Exception as e:
+                        logging.error(f"Error processing LIDAR data for Sensor ID {key}: {e}")"""
 
-                # Process LIDAR data
-                points = len(data)  # Example: Count number of LIDAR points
-                lidar_data_buffer[vehicle_id] = points
-                logging.debug(f"LIDAR data buffer: {lidar_data_buffer}")
-                logging.info(f"Vehicle ID {vehicle_id} is {nearby_vehicles[vehicle_id][1]:.2f}m from Ego Vehicle.")
-                logging.debug(f"LIDAR data processed for vehicle {vehicle_id}: {points} points.")
+        except AttributeError as e:
+            logging.error(f"AttributeError in LIDAR callback for Sensor ID {sensor_id}: {e}")
+        except KeyError as e:
+            logging.error(f"KeyError in LIDAR callback for Sensor ID {sensor_id}: {e}")
         except Exception as e:
-            logging.error(f"Error in LIDAR callback for vehicle {vehicle_id}: {e}")
-
-
+            logging.error(f"Unhandled error in LIDAR callback for Sensor ID {sensor_id}: {e}")
 
     def attach_gnss(self, world, vehicle, gnss_config, transform):
         """
@@ -180,10 +224,16 @@ class Sensors:
                         attached_sensors.append(lidar)
                         logging.info(f"LIDAR attached with ID: {lidar.id} to Vehicle ID: {vehicle.id}")
 
-                        # Attach the callback for LIDAR
-                        lidar.listen(
-                            lambda data: self.lidar_callback(data, vehicle.id, ego_vehicle, proximity_mapping, lidar_data_buffer, lidar_data_lock)
-                        )
+                        # if ego_Vehicle
+                        if vehicle_label == 'ego_veh':
+                            lidar.listen(
+                                lambda data: self.ego_lidar_callback(data, 32, lidar_data_buffer, lidar_data_lock)
+                            )
+                        else:
+                            # Attach the callback for LIDAR
+                            lidar.listen(
+                                lambda data: self.lidar_callback(data, vehicle.id, lidar.id , ego_vehicle, proximity_mapping, lidar_data_buffer, lidar_data_lock)
+                            )
                     else:
                         logging.warning(f"Failed to attach LIDAR to Vehicle ID: {vehicle.id}")
 
