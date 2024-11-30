@@ -7,6 +7,7 @@ import argparse
 import threading
 from threading import Lock
 import time
+import os
 
 from agents.controller import ControlObject
 from agents.EnvironmentManager import EnvironmentManager
@@ -19,6 +20,7 @@ from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
 from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping
 from utils.proximity_mapping import ProximityMapping
+from utils.bbox import BoundingBoxExtractor
 from carla_birdeye_view import BirdViewProducer, BirdViewCropType, PixelDimensions
 from PIL import Image
 import cv2
@@ -341,6 +343,8 @@ def main():
             vehicle_mapping, env_manager, ego_vehicle, smart_vehicles,
             lidar_data_buffer, lidar_data_lock,  waypoint_manager, birdview_producer
         )
+
+        logging.info("Bounding boxes plotted on all frames.")
     except Exception as e:
         logging.error(f"An error occurred during the simulation: {e}")
     finally:

@@ -43,27 +43,20 @@ def project_lidar_to_2d(lidar_points, frame_size=(1920, 1080), lidar_range=400):
         return None
 
 
-def save_lidar_frames(lidar_points, frame_size=(1920, 1080), output_dir="sensor_frames", lidar_range=400):
-    """
-    Saves the given LiDAR points as a 2D frame.
-
-    :param lidar_points: NumPy array of LiDAR points in XYZI format.
-    :param frame_size: Tuple indicating the dimensions of the output frame (width, height).
-    :param output_dir: Directory where the frames will be saved.
-    :param lidar_range: The maximum range of the LiDAR sensor.
-    """
+def save_lidar_frames(lidar_points, frame_size=(1920, 1080), output_dir="combined_lidar_frames"):
     if lidar_points is None or len(lidar_points) == 0:
-        logging.warning("No LiDAR data to save.")
-        return
+        logging.warning("No combined LiDAR data to save.")
+        return None
 
     try:
-        lidar_image = project_lidar_to_2d(lidar_points, frame_size=frame_size, lidar_range=lidar_range)
+        lidar_image = project_lidar_to_2d(lidar_points, frame_size)
         if lidar_image is not None:
             os.makedirs(output_dir, exist_ok=True)
-            frame_path = os.path.join(output_dir, f"frame_{int(time.time() * 1000)}.png")
+            frame_filename = f"frame_{int(time.time() * 1000)}.png"
+            frame_path = os.path.join(output_dir, frame_filename)
             cv2.imwrite(frame_path, lidar_image)
             logging.info(f"LiDAR frame saved: {frame_path}")
-        else:
-            logging.warning("LiDAR image was not generated successfully. Frame not saved.")
+            return frame_filename
     except Exception as e:
         logging.error(f"Error saving LiDAR frame: {e}")
+        return None

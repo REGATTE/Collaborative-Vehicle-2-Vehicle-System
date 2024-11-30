@@ -12,6 +12,10 @@ from utils.compression import DataCompressor
 from utils.bbox import BoundingBoxExtractor
 from utils.save_frame import save_lidar_frames
 
+frames_dir = "combined_lidar_frames"
+bboxes_dir = "combined_bounding_boxes"
+output_dir = "frames_with_bboxes"
+
 class EgoVehicleListener:
     def __init__(self, lidar_data_buffer, lidar_data_lock, host='127.0.0.1', port=65432, ego_vehicle=None, world=None, lidar_range=400):
         """
@@ -152,12 +156,16 @@ class EgoVehicleListener:
         # Combine the transformed XYZ with the original intensity
         return np.hstack((translated_points, intensity.reshape(-1, 1)))
 
-    def combine_lidar_data(self):
+    def combine_lidar_data(self, ego_vehicle):
         """
         Combines LIDAR data from all nearby smart vehicles into a single dataset and extracts bounding boxes.
         """
         combined_lidar = None
         bounding_boxes = []
+
+        ego_location = {"x": ego_vehicle.get_transform().location.x, 
+                "y": ego_vehicle.get_transform().location.y, 
+                "z": ego_vehicle.get_transform().location.z}
 
         # Access ego vehicle lidar data
         ego_lidar_id = 32  # Force mapping for testing
@@ -180,7 +188,7 @@ class EgoVehicleListener:
                 logging.info(f"Ego LIDAR data processed with {ego_lidar_array.shape[0]} points.")
 
                 # Extract bounding boxes for the ego vehicle
-                ego_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(self.ego_vehicle)
+                ego_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(self.ego_vehicle, ego_location)
                 if ego_bounding_boxes:
                     bounding_boxes.extend(ego_bounding_boxes)
                     logging.info(f"Ego vehicle bounding boxes extracted: {len(ego_bounding_boxes)}.")
@@ -210,7 +218,7 @@ class EgoVehicleListener:
                 # Extract bounding boxes for the smart vehicle
                 vehicle_actor = self.proximity_mapping.world.get_actor(self.vehicle_mapping[vehicle_label]["actor_id"])
                 if vehicle_actor:
-                    vehicle_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(vehicle_actor)
+                    vehicle_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(vehicle_actor, ego_location)
                     if vehicle_bounding_boxes:
                         bounding_boxes.extend(vehicle_bounding_boxes)
                         logging.info(f"Bounding boxes extracted for vehicle {vehicle_label}: {len(vehicle_bounding_boxes)}.")
@@ -222,22 +230,57 @@ class EgoVehicleListener:
                 logging.error(f"Error processing LIDAR data for vehicle {vehicle_label}: {e}")
 
         # Save the combined LiDAR frame
+        frame_file = None
         if combined_lidar is not None:
-            save_lidar_frames(
+            frame_file = save_lidar_frames(
                 lidar_points=combined_lidar,
                 frame_size=(1920, 1080),
                 output_dir="combined_lidar_frames"
             )
 
-        # Save the combined bounding boxes
+        # Save bounding boxes separately
+        bbox_file = None
         if bounding_boxes:
-            self.bounding_box_extractor.save_bounding_boxes(
+            bbox_file = self.bounding_box_extractor.save_bounding_boxes(
                 bounding_boxes=bounding_boxes,
                 output_dir="combined_bounding_boxes"
             )
-            logging.info(f"Total bounding boxes saved: {len(bounding_boxes)}.")
+            if bbox_file:
+                logging.info(f"Bounding boxes saved: {bbox_file}.")
+            else:
+                logging.warning("Bounding boxes were not saved correctly. File name is None.")
         else:
             logging.warning("No bounding boxes extracted.")
+
+        # Save the frame with bounding boxes plotted
+        if frame_file and bbox_file:
+            logging.debug(f"Both frame_file and bbox_file are available. Proceeding to plot bounding boxes.")
+            frame_path = os.path.join("combined_lidar_frames", frame_file)
+            bbox_path = os.path.join("combined_bounding_boxes", bbox_file)
+            output_dir = "frames_with_bboxes"
+
+            logging.debug(f"Frame path: {frame_path}")
+            logging.debug(f"Bounding boxes path: {bbox_path}")
+            logging.debug(f"Output directory for frames with bounding boxes: {output_dir}")
+
+            try:
+                # Plot bounding boxes on the frame
+                self.bounding_box_extractor.plot_bounding_boxes_on_lidar_frame(
+                    frame_path=frame_path,
+                    bounding_boxes=bounding_boxes,
+                    frame_size=(1920, 1080),
+                    lidar_range=400,  # Example lidar range
+                    ego_location=ego_location,
+                    output_dir="frames_with_bboxes"
+                )
+                logging.info(f"Frame with bounding boxes saved successfully to: {output_dir}")
+            except Exception as e:
+                logging.error(f"Failed to plot bounding boxes on frame. Error: {e}")
+        else:
+            if not frame_file:
+                logging.warning("Frame file is missing. Skipping frame with bounding boxes plotting.")
+            if not bbox_file:
+                logging.warning("Bounding boxes file is missing. Skipping frame with bounding boxes plotting.")
 
         logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
         return combined_lidar
@@ -363,7 +406,7 @@ class EgoVehicleListener:
             logging.info(f"Received {len(lidar_points)} LIDAR points from {vehicle_label}.")
             self.lidar_data_proximity[vehicle_label] = lidar_points
 
-            combined_lidar = self.combine_lidar_data()
+            combined_lidar = self.combine_lidar_data(self.ego_vehicle)
             logging.info(f"Path planning can now use combined LIDAR data with {len(combined_lidar)} points.")
 
             self.trigger_path_planning(combined_lidar)

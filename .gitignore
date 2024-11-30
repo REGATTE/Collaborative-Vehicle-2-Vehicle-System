@@ -18,3 +18,4 @@ birdview_v2_cache/Carla/Maps/*
 # Ignore generated folders
 combined_lidar_frames/*
 combined_bounding_boxes/*
+frames_with_bboxes/*
