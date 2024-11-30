@@ -162,7 +162,8 @@ class EgoVehicleListener:
         Combines LIDAR data from all nearby smart vehicles into a single dataset and extracts bounding boxes.
         """
         combined_lidar = None
-        bounding_boxes = []
+        gt_bounding_boxes = []
+        det_bounding_boxes = []
 
         ego_location = {"x": ego_vehicle.get_transform().location.x, 
                 "y": ego_vehicle.get_transform().location.y, 
@@ -191,7 +192,7 @@ class EgoVehicleListener:
                 # Extract bounding boxes for the ego vehicle
                 ego_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(self.ego_vehicle, ego_location)
                 if ego_bounding_boxes:
-                    bounding_boxes.extend(ego_bounding_boxes)
+                    gt_bounding_boxes.extend(ego_bounding_boxes)
                     logging.info(f"Ego vehicle bounding boxes extracted: {len(ego_bounding_boxes)}.")
                 else:
                     logging.warning("No bounding boxes extracted for the ego vehicle.")
@@ -221,7 +222,7 @@ class EgoVehicleListener:
                 if vehicle_actor:
                     vehicle_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(vehicle_actor, ego_location)
                     if vehicle_bounding_boxes:
-                        bounding_boxes.extend(vehicle_bounding_boxes)
+                        gt_bounding_boxes.extend(vehicle_bounding_boxes)
                         logging.info(f"Bounding boxes extracted for vehicle {vehicle_label}: {len(vehicle_bounding_boxes)}.")
                     else:
                         logging.warning(f"No bounding boxes extracted for vehicle {vehicle_label}.")
@@ -239,71 +240,104 @@ class EgoVehicleListener:
                 output_dir="combined_lidar_frames"
             )
 
-        # Save bounding boxes separately
-        bbox_file = None
-        if bounding_boxes:
-            bbox_file = self.bounding_box_extractor.save_bounding_boxes(
-                bounding_boxes=bounding_boxes,
-                output_dir="combined_bounding_boxes"
+        # Save gt bounding boxes separately
+        gt_bbox_file = None
+        if gt_bounding_boxes:
+            gt_bbox_file = self.bounding_box_extractor.save_bounding_boxes(
+                bounding_boxes=gt_bounding_boxes,
+                output_dir="gt_bounding_boxes"
             )
-            if bbox_file:
-                logging.info(f"Bounding boxes saved: {bbox_file}.")
+            if gt_bbox_file:
+                logging.info(f"GT Bounding boxes saved: {gt_bbox_file}.")
             else:
-                logging.warning("Bounding boxes were not saved correctly. File name is None.")
+                logging.warning("GT Bounding boxes were not saved correctly. File name is None.")
         else:
-            logging.warning("No bounding boxes extracted.")
+            logging.warning("No gt bounding boxes extracted.")
 
-        # Save the frame with bounding boxes plotted
-        if frame_file and bbox_file:
+        # Save the frame with gt bounding boxes plotted
+        if frame_file and gt_bbox_file:
             logging.debug(f"Both frame_file and bbox_file are available. Proceeding to plot bounding boxes.")
             frame_path = os.path.join("combined_lidar_frames", frame_file)
-            bbox_path = os.path.join("combined_bounding_boxes", bbox_file)
-            output_dir = "frames_with_bboxes"
+            gt_bbox_path = os.path.join("combined_bounding_boxes", gt_bbox_file)
+            output_dir = "frames_with_gt_bboxes"
 
             logging.debug(f"Frame path: {frame_path}")
-            logging.debug(f"Bounding boxes path: {bbox_path}")
+            logging.debug(f"Bounding boxes path: {gt_bbox_path}")
             logging.debug(f"Output directory for frames with bounding boxes: {output_dir}")
 
             try:
                 # Plot bounding boxes on the frame
                 self.bounding_box_extractor.plot_bounding_boxes_on_lidar_frame(
                     frame_path=frame_path,
-                    bounding_boxes=bounding_boxes,
+                    bounding_boxes=gt_bounding_boxes,
                     frame_size=(1920, 1080),
                     lidar_range=400,  # Example lidar range
                     ego_location=ego_location,
-                    output_dir="frames_with_bboxes"
+                    output_dir=output_dir
                 )
-                logging.info(f"Frame with bounding boxes saved successfully to: {output_dir}")
+                logging.info(f"Frame with gt bounding boxes saved successfully to: {output_dir}")
             except Exception as e:
-                logging.error(f"Failed to plot bounding boxes on frame. Error: {e}")
+                logging.error(f"Failed to plot gt bounding boxes on frame. Error: {e}")
         else:
             if not frame_file:
                 logging.warning("Frame file is missing. Skipping frame with bounding boxes plotting.")
-            if not bbox_file:
-                logging.warning("Bounding boxes file is missing. Skipping frame with bounding boxes plotting.")
+            if not gt_bbox_file:
+                logging.warning("GT Bounding boxes file is missing. Skipping frame with bounding boxes plotting.")
 
         logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
 
-        if combined_lidar is not None:
-            try:
-                detector = LidarBoundingBoxDetector(output_dir="combined_bounding_det_boxes")
-                bounding_boxes = detector.detect_bounding_boxes(combined_lidar, eps=1.0, min_samples=10)
-                detector.save_bounding_boxes_to_json(bounding_boxes, file_name="combined_lidar_bounding_boxes.json")
-
-                # Center visualization on the ego vehicle
-                detector.plot_bounding_boxes_on_lidar_frame(
-                    lidar_points=combined_lidar,
-                    bounding_boxes=bounding_boxes,
-                    ego_location=ego_location,
-                    output_dir="frames_with_det_bboxes",
-                    frame_file="centered_frame_with_bboxes.png"
-                )
-                logging.info("Bounding boxes detected, saved, and visualized successfully.")
-            except Exception as e:
-                logging.error(f"Error detecting bounding boxes from combined LiDAR data: {e}")
+        lidar_det_bounding_box_detector = LidarBoundingBoxDetector(output_dir="det_bounding_boxes")
+        # Detect bounding boxes
+        det_bounding_boxes = lidar_det_bounding_box_detector.detect_bounding_boxes(
+            point_cloud=combined_lidar, eps=0.5, min_samples=10
+        )
+        # Save detected bounding boxes
+        det_bbox_file = None
+        if det_bounding_boxes:
+            det_bbox_file = lidar_det_bounding_box_detector.save_bounding_boxes(
+                bounding_boxes=det_bounding_boxes,
+                output_dir="det_bounding_boxes"
+            )
+            if det_bbox_file:
+                logging.info(f"Det Bounding boxes saved: {det_bbox_file}.")
+            else:
+                logging.warning("Det Bounding boxes were not saved correctly. File name is None.")
         else:
-            logging.warning("No combined LiDAR data available for bounding box detection.")
+            logging.warning("No det bounding boxes extracted.")
+
+        #plot det bbox on gt lidar frame
+
+        # Save the frame with gt bounding boxes plotted
+        if frame_file and det_bbox_file:
+            logging.debug(f"Both frame_file and bbox_file are available. Proceeding to plot bounding boxes.")
+            frame_path = os.path.join("frames_with_gt_bboxes", frame_file)
+            det_bbox_path = os.path.join("combined_bounding_boxes", det_bbox_file)
+            output_dir = "frames_with_det_bboxes"
+
+            logging.debug(f"Frame path: {frame_path}")
+            logging.debug(f"Det Bounding boxes path: {det_bbox_path}")
+            logging.debug(f"Output directory for frames with bounding boxes: {output_dir}")
+
+            try:
+                # Plot bounding boxes on the frame
+                lidar_det_bounding_box_detector.plot_bounding_boxes_on_lidar_frame(
+                    frame_path=frame_path,
+                    bounding_boxes=det_bounding_boxes,
+                    frame_size=(1920, 1080),
+                    lidar_range=400,  # Example lidar range
+                    ego_location=ego_location,
+                    output_dir=output_dir
+                )
+                logging.info(f"Frame with gt bounding boxes saved successfully to: {output_dir}")
+            except Exception as e:
+                logging.error(f"Failed to plot gt bounding boxes on frame. Error: {e}")
+        else:
+            if not frame_file:
+                logging.warning("Frame file is missing. Skipping frame with bounding boxes plotting.")
+            if not det_bbox_file:
+                logging.warning("GT Bounding boxes file is missing. Skipping frame with bounding boxes plotting.")
+
+        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
 
         return combined_lidar
 

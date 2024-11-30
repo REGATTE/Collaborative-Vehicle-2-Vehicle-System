@@ -264,17 +264,17 @@ class BoundingBoxExtractor:
             os.makedirs(output_dir, exist_ok=True)
 
             # Generate a timestamped filename
-            filename = f"bounding_boxes_{int(time.time() * 1000)}.json"
+            filename = f"gt_bounding_boxes_{int(time.time() * 1000)}.json"
             filepath = os.path.join(output_dir, filename)
 
             # Save bounding boxes to the JSON file
             with open(filepath, "w") as f:
                 json.dump(bounding_boxes, f, indent=4)
 
-            logging.info(f"Bounding boxes saved to: {filepath}")
+            logging.info(f"GT Bounding boxes saved to: {filepath}")
             return filename
         except Exception as e:
-            logging.error(f"Failed to save bounding boxes: {e}")
+            logging.error(f"Failed to save gt bounding boxes: {e}")
             return None
 
     def compute_bounding_box_3d_lidar(self, location, extent, rotation, ego_location):
