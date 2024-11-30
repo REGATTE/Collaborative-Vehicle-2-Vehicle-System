@@ -20,7 +20,7 @@ from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
 from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping
 from utils.proximity_mapping import ProximityMapping
-from utils.bbox import BoundingBoxExtractor
+from utils.bbox.bbox import BoundingBoxExtractor
 from carla_birdeye_view import BirdViewProducer, BirdViewCropType, PixelDimensions
 from PIL import Image
 import cv2

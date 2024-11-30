@@ -19,3 +19,4 @@ birdview_v2_cache/Carla/Maps/*
 combined_lidar_frames/*
 combined_bounding_boxes/*
 frames_with_bboxes/*
+combined_bounding_det_boxes/*

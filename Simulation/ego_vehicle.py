@@ -9,7 +9,8 @@ import os, sys, cv2
 from utils.proximity_mapping import ProximityMapping
 from utils.vehicle_mapping.vehicle_mapping import load_vehicle_mapping
 from utils.compression import DataCompressor
-from utils.bbox import BoundingBoxExtractor
+from utils.bbox.bbox import BoundingBoxExtractor
+from utils.bbox.det_box import LidarBoundingBoxDetector
 from utils.save_frame import save_lidar_frames
 
 frames_dir = "combined_lidar_frames"
@@ -283,6 +284,27 @@ class EgoVehicleListener:
                 logging.warning("Bounding boxes file is missing. Skipping frame with bounding boxes plotting.")
 
         logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
+
+        if combined_lidar is not None:
+            try:
+                detector = LidarBoundingBoxDetector(output_dir="combined_bounding_det_boxes")
+                bounding_boxes = detector.detect_bounding_boxes(combined_lidar, eps=1.0, min_samples=10)
+                detector.save_bounding_boxes_to_json(bounding_boxes, file_name="combined_lidar_bounding_boxes.json")
+
+                # Center visualization on the ego vehicle
+                detector.plot_bounding_boxes_on_lidar_frame(
+                    lidar_points=combined_lidar,
+                    bounding_boxes=bounding_boxes,
+                    ego_location=ego_location,
+                    output_dir="frames_with_det_bboxes",
+                    frame_file="centered_frame_with_bboxes.png"
+                )
+                logging.info("Bounding boxes detected, saved, and visualized successfully.")
+            except Exception as e:
+                logging.error(f"Error detecting bounding boxes from combined LiDAR data: {e}")
+        else:
+            logging.warning("No combined LiDAR data available for bounding box detection.")
+
         return combined_lidar
 
 

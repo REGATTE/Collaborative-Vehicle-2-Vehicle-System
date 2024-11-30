@@ -402,5 +402,3 @@ class BoundingBoxExtractor:
 
         except Exception as e:
             logging.error(f"Error plotting bounding boxes: {e}")
-
-
