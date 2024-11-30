@@ -36,7 +36,7 @@ class Sensors:
                 'type': 'sensor.lidar.ray_cast',
                 'transform': {'x': 0.7, 'y': 0.0, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
                 'attributes': {
-                    'range': 50, 'rotation_frequency': 20, 'channels': 128,
+                    'range': 100, 'rotation_frequency': 20, 'channels': 128,
                     'upper_fov': 4, 'lower_fov': -20, 'points_per_second': 2304000
                 },
                 'id': 'LIDAR'
