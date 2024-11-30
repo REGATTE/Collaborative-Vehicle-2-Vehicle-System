@@ -5,6 +5,8 @@ import json
 from threading import Lock, Thread
 from math import sqrt
 import time
+import os, cv2
+import numpy as np
 
 from utils.compression import DataCompressor
 
@@ -84,7 +86,6 @@ class ProximityMapping:
                 logging.error(f"Error retrieving sensor ID {sensor_id} for {vehicle_label}: {e}")
         return None  # Return None if no LIDAR sensor is found
 
-
     def send_data_to_ego(self, ego_address, smart_vehicle_id, smart_vehicle, vehicle_mapping, lidar_data_buffer, lidar_data_lock):
         """
         Sends the full pose data (position, rotation, speed, and LIDAR) from the smart vehicle to the ego vehicle.
@@ -126,6 +127,10 @@ class ProximityMapping:
         if lidar_data:
             if isinstance(lidar_data, memoryview):
                 lidar_data = list(lidar_data)
+
+            # Convert LiDAR data into NumPy format for visualization
+            lidar_points = np.frombuffer(bytearray(lidar_data), dtype=np.float32).reshape(-1, 4)
+
             # Log the type of lidar_data before serialization
             # logging.info(f"Type of lidar_data before serialization: {type(lidar_data)}")
             logging.info(f"Sending LIDAR data from {vehicle_label} to Ego Vehicle: {len(lidar_data)} points.")
