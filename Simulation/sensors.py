@@ -36,7 +36,7 @@ class Sensors:
                 'type': 'sensor.lidar.ray_cast',
                 'transform': {'x': 0.7, 'y': 0.0, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
                 'attributes': {
-                    'range': 50, 'rotation_frequency': 20, 'channels': 64,
+                    'range': 50, 'rotation_frequency': 20, 'channels': 128,
                     'upper_fov': 4, 'lower_fov': -20, 'points_per_second': 2304000
                 },
                 'id': 'LIDAR'
@@ -139,28 +139,6 @@ class Sensors:
                     f"(Vehicle ID {vehicle_id}): {len(points)} points. "
                     f"Distance to Ego: {vehicles_in_radius[vehicle_id][1]:.2f}m."
                 )
-            
-            """# Log all keys and first 10 points of each dataset in lidar_data_buffer
-            with lidar_data_lock:
-                logging.info("Current LIDAR data buffer state:")
-                for key, value in lidar_data_buffer.items():
-                    logging.info(f"Sensor ID {key}: Data type is {type(value)}")
-                    try:
-                        if isinstance(value, memoryview):
-                            logging.info(f"Sensor ID {key}: Converting memoryview to NumPy array.")
-                            points_array = np.frombuffer(value, dtype=np.float32).reshape(-1, 4)
-                        elif isinstance(value, bytes):
-                            points_array = np.frombuffer(value, dtype=np.float32).reshape(-1, 4)
-                        else:
-                            logging.warning(f"Sensor ID {key}: Data type not recognized, skipping detailed log.")
-                            continue
-                        
-                        # Log the first 10 points
-                        logging.info(
-                            f"Sensor ID {key}: First 10 points: {points_array[:10].tolist() if len(points_array) >= 10 else points_array.tolist()}"
-                        )
-                    except Exception as e:
-                        logging.error(f"Error processing LIDAR data for Sensor ID {key}: {e}")"""
 
         except AttributeError as e:
             logging.error(f"AttributeError in LIDAR callback for Sensor ID {sensor_id}: {e}")

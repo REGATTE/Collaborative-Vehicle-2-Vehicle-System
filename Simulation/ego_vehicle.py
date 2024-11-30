@@ -4,6 +4,7 @@ import logging
 import json
 import numpy as np
 import time
+import os, sys, cv2
 
 from utils.proximity_mapping import ProximityMapping
 from utils.vehicle_mapping.vehicle_mapping import load_vehicle_mapping
@@ -52,6 +53,70 @@ class EgoVehicleListener:
             ),
             None,
         )
+    
+    def project_lidar_to_2d(self, lidar_points, frame_size=(1920, 1080), lidar_range=400):
+        """
+        Projects LiDAR points onto a 2D image plane.
+
+        :param lidar_points: NumPy array of LiDAR points in XYZI format (N, 4).
+        :param frame_size: Tuple indicating the dimensions of the output frame (width, height).
+        :param lidar_range: The maximum range of the LiDAR sensor.
+        :return: A 2D numpy array representing the projected LiDAR data.
+        """
+        try:
+            width, height = frame_size
+            lidar_image = np.zeros((height, width), dtype=np.uint8)
+
+            scale_x = width / lidar_range
+            scale_y = height / lidar_range
+
+            # Log point stats for debugging
+            logging.debug(f"Projecting {lidar_points.shape[0]} LiDAR points to a frame of size {frame_size}.")
+
+            for point in lidar_points:
+                x, y, z, intensity = point
+                if z < -2:  # Filter ground clutter
+                    continue
+
+                px = int((x + lidar_range / 2) * scale_x)
+                py = int((lidar_range / 2 - y) * scale_y)
+
+                # Ensure pixel coordinates are within bounds
+                if 0 <= px < width and 0 <= py < height:
+                    pixel_value = int(min(255, max(0, intensity * 255)))
+                    lidar_image[py, px] = pixel_value
+
+            logging.info(f"LiDAR frame created successfully with {lidar_points.shape[0]} points.")
+            return lidar_image
+        except Exception as e:
+            logging.error(f"Error projecting LiDAR to 2D: {e}")
+            return None
+
+
+    def save_lidar_frames(self, lidar_points, frame_size=(1920, 1080), output_dir="sensor_frames", lidar_range=400):
+        """
+        Saves the given LiDAR points as a 2D frame.
+
+        :param lidar_points: NumPy array of LiDAR points in XYZI format.
+        :param frame_size: Tuple indicating the dimensions of the output frame (width, height).
+        :param output_dir: Directory where the frames will be saved.
+        :param lidar_range: The maximum range of the LiDAR sensor.
+        """
+        if lidar_points is None or len(lidar_points) == 0:
+            logging.warning("No LiDAR data to save.")
+            return
+
+        try:
+            lidar_image = self.project_lidar_to_2d(lidar_points, frame_size=frame_size, lidar_range=lidar_range)
+            if lidar_image is not None:
+                os.makedirs(output_dir, exist_ok=True)
+                frame_path = os.path.join(output_dir, f"frame_{int(time.time() * 1000)}.png")
+                cv2.imwrite(frame_path, lidar_image)
+                logging.info(f"LiDAR frame saved: {frame_path}")
+            else:
+                logging.warning("LiDAR image was not generated successfully. Frame not saved.")
+        except Exception as e:
+            logging.error(f"Error saving LiDAR frame: {e}")
 
     def compute_relative_pose(self, vehicle_label):
         """
@@ -141,7 +206,7 @@ class EgoVehicleListener:
         """
         Combines LIDAR data from all nearby smart vehicles into a single dataset.
         """
-        combined_lidar = []
+        combined_lidar = None
 
         # Access ego vehicle lidar data
         ego_lidar_id = 32 # force mapping for testing
@@ -159,9 +224,9 @@ class EgoVehicleListener:
         else:
             try:
                 # process and adde ego lidar data
-                lidar_array = np.frombuffer(bytearray(ego_lidar_data), dtype=np.float32).reshape(-1, 4)
-                combined_lidar.extend(lidar_array)
-                logging.info(f"Ego LIDAR data processed with {len(lidar_array)} points.")
+                ego_lidar_array = np.frombuffer(bytearray(ego_lidar_data), dtype=np.float32).reshape(-1, 4)
+                combined_lidar = ego_lidar_array
+                logging.info(f"Ego LIDAR data processed with {ego_lidar_array} points.")
             except Exception as e:
                 logging.error(f"Error processing ego LIDAR data: {e}")
         
@@ -170,26 +235,25 @@ class EgoVehicleListener:
             if vehicle_label not in self.vehicle_mapping:
                 logging.warning(f"Vehicle label {vehicle_label} not found in vehicle mapping. Skipping.")
                 continue
-
             try:
                 # convert list to numpy array for reshaping and manipulation
-                lidar_array = np.array(lidar_points, dtype=np.float32)
-                #validate that the data is in XYZI format
-                if len(lidar_array) % 4 != 0:
-                    logging.error(f"LIDAR data size {len(lidar_array)} is not divisible by 4. Skipping vehicle {vehicle_label}.")
-                    continue
-                # Reshape to (N, 4) for XYZI format
-                lidar_array = lidar_array.reshape(-1, 4)  # Each row is [X, Y, Z, I]
-                logging.info(f"LIDAR data for vehicle {vehicle_label} reshaped to {lidar_array.shape[0]} points (XYZI format).")
-
+                smart_lidar_array = np.frombuffer(bytearray(lidar_points), dtype=np.float32).reshape(-1, 4)
                 # compute relative pose
                 relative_pose = self.compute_relative_pose(vehicle_label)
                 relative_position = relative_pose["relative_position"]
                 relative_yaw = relative_pose["relative_yaw"]
 
                 # Transform lidar points
-                transformed_points = self.transform_lidar_points(lidar_array, relative_position, relative_yaw)
-                combined_lidar.extend(transformed_points)
+                transformed_points = self.transform_lidar_points(smart_lidar_array, relative_position, relative_yaw)
+                # Save the transformed LiDAR frame for debugging
+                logging.info(f"Transformed LiDAR frame saved for vehicle {vehicle_label}.")
+                combined_lidar = np.vstack((combined_lidar, transformed_points))
+
+                self.save_lidar_frames(
+                    combined_lidar,
+                    frame_size=(1920, 1080),
+                    output_dir="combined_lidar_frames"
+                )
             except Exception as e:
                 logging.error(f"Error processing LIDAR data for vehicle {vehicle_label}: {e}")
 
