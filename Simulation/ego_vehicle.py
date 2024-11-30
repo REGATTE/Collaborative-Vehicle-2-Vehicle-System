@@ -226,7 +226,7 @@ class EgoVehicleListener:
                 # process and adde ego lidar data
                 ego_lidar_array = np.frombuffer(bytearray(ego_lidar_data), dtype=np.float32).reshape(-1, 4)
                 combined_lidar = ego_lidar_array
-                logging.info(f"Ego LIDAR data processed with {ego_lidar_array} points.")
+                # logging.info(f"Ego LIDAR data processed with {ego_lidar_array} points.")
             except Exception as e:
                 logging.error(f"Error processing ego LIDAR data: {e}")
         

@@ -75,6 +75,10 @@ Ego Car BEV Visualisation
 
 ![EGO Car BEV Viz](docs/Images/EGO_Car_BEV.png)
 
+Combined data LiDAR View
+
+![Combined lidar view](docs/Images/combined_lidar_frame.png)
+
 ## Errors 
 
 we have compiled all the errors that we have faced, and how to fix them. The instructions can be found [here](docs/CarlaErrors.md)
