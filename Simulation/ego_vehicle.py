@@ -9,9 +9,11 @@ import os, sys, cv2
 from utils.proximity_mapping import ProximityMapping
 from utils.vehicle_mapping.vehicle_mapping import load_vehicle_mapping
 from utils.compression import DataCompressor
+from utils.bbox import BoundingBoxExtractor
+from utils.save_frame import save_lidar_frames
 
 class EgoVehicleListener:
-    def __init__(self, lidar_data_buffer, lidar_data_lock, host='127.0.0.1', port=65432, ego_vehicle=None, world=None):
+    def __init__(self, lidar_data_buffer, lidar_data_lock, host='127.0.0.1', port=65432, ego_vehicle=None, world=None, lidar_range=400):
         """
         Initializes the ego vehicle listener.
         :param lidar_data_buffer: Shared buffer for storing LIDAR data.
@@ -23,17 +25,29 @@ class EgoVehicleListener:
         """
         if world is None:
             raise ValueError("CARLA world instance is required.")
-        
         self.host = host
         self.port = port
         self.ego_vehicle = ego_vehicle
         self.world = world
-        self.vehicle_mapping = load_vehicle_mapping()  # Load vehicle mapping
-        self.lidar_data_proximity = {}  # Store LIDAR data for vehicles in proximity
-        self.proximity_mapping = ProximityMapping(world, radius=20.0)  # Use proximity mapping
-        self.running = True  # Flag to safely terminate thread
+        self.lidar_range = lidar_range
+
+        # shared data
         self.lidar_data_lock = lidar_data_lock  # Shared lock for thread safety
         self.lidar_data_buffer = lidar_data_buffer  # Shared buffer for LIDAR data
+
+        # utilities
+        self.vehicle_mapping = load_vehicle_mapping()  # Load vehicle mapping
+        self.proximity_mapping = ProximityMapping(world=self.world, radius=20.0)  # Use proximity mapping
+        self.bounding_box_extractor = BoundingBoxExtractor(
+            world=self.world,
+            ego_vehicle=self.ego_vehicle,
+            vehicle_mapping=self.vehicle_mapping,
+            proximity_mapping=self.proximity_mapping
+        )
+
+        # Runtime variables
+        self.lidar_data_proximity = {}  # Store LIDAR data for vehicles in proximity
+        self.running = True  # Flag to safely terminate thread
     
     def get_vehicle_id(self, label):
         """
@@ -53,70 +67,6 @@ class EgoVehicleListener:
             ),
             None,
         )
-    
-    def project_lidar_to_2d(self, lidar_points, frame_size=(1920, 1080), lidar_range=400):
-        """
-        Projects LiDAR points onto a 2D image plane.
-
-        :param lidar_points: NumPy array of LiDAR points in XYZI format (N, 4).
-        :param frame_size: Tuple indicating the dimensions of the output frame (width, height).
-        :param lidar_range: The maximum range of the LiDAR sensor.
-        :return: A 2D numpy array representing the projected LiDAR data.
-        """
-        try:
-            width, height = frame_size
-            lidar_image = np.zeros((height, width), dtype=np.uint8)
-
-            scale_x = width / lidar_range
-            scale_y = height / lidar_range
-
-            # Log point stats for debugging
-            logging.debug(f"Projecting {lidar_points.shape[0]} LiDAR points to a frame of size {frame_size}.")
-
-            for point in lidar_points:
-                x, y, z, intensity = point
-                if z < -2:  # Filter ground clutter
-                    continue
-
-                px = int((x + lidar_range / 2) * scale_x)
-                py = int((lidar_range / 2 - y) * scale_y)
-
-                # Ensure pixel coordinates are within bounds
-                if 0 <= px < width and 0 <= py < height:
-                    pixel_value = int(min(255, max(0, intensity * 255)))
-                    lidar_image[py, px] = pixel_value
-
-            logging.info(f"LiDAR frame created successfully with {lidar_points.shape[0]} points.")
-            return lidar_image
-        except Exception as e:
-            logging.error(f"Error projecting LiDAR to 2D: {e}")
-            return None
-
-
-    def save_lidar_frames(self, lidar_points, frame_size=(1920, 1080), output_dir="sensor_frames", lidar_range=400):
-        """
-        Saves the given LiDAR points as a 2D frame.
-
-        :param lidar_points: NumPy array of LiDAR points in XYZI format.
-        :param frame_size: Tuple indicating the dimensions of the output frame (width, height).
-        :param output_dir: Directory where the frames will be saved.
-        :param lidar_range: The maximum range of the LiDAR sensor.
-        """
-        if lidar_points is None or len(lidar_points) == 0:
-            logging.warning("No LiDAR data to save.")
-            return
-
-        try:
-            lidar_image = self.project_lidar_to_2d(lidar_points, frame_size=frame_size, lidar_range=lidar_range)
-            if lidar_image is not None:
-                os.makedirs(output_dir, exist_ok=True)
-                frame_path = os.path.join(output_dir, f"frame_{int(time.time() * 1000)}.png")
-                cv2.imwrite(frame_path, lidar_image)
-                logging.info(f"LiDAR frame saved: {frame_path}")
-            else:
-                logging.warning("LiDAR image was not generated successfully. Frame not saved.")
-        except Exception as e:
-            logging.error(f"Error saving LiDAR frame: {e}")
 
     def compute_relative_pose(self, vehicle_label):
         """
@@ -204,62 +154,94 @@ class EgoVehicleListener:
 
     def combine_lidar_data(self):
         """
-        Combines LIDAR data from all nearby smart vehicles into a single dataset.
+        Combines LIDAR data from all nearby smart vehicles into a single dataset and extracts bounding boxes.
         """
         combined_lidar = None
+        bounding_boxes = []
 
         # Access ego vehicle lidar data
-        ego_lidar_id = 32 # force mapping for testing
+        ego_lidar_id = 32  # Force mapping for testing
         logging.info(f"combine_lidar_data: Attempting to access data for Sensor ID {ego_lidar_id}.")
         
         with self.lidar_data_lock:
             ego_lidar_data = self.lidar_data_buffer.get(ego_lidar_id, [])
-        # convert to list from memoryview
+        # Convert to list from memoryview
         if isinstance(ego_lidar_data, memoryview):
-            logging.info("converting ego lidar data to list")
+            logging.info("Converting ego lidar data to list")
             ego_lidar_data = list(ego_lidar_data)
         
         if not ego_lidar_data:
             logging.warning(f"No LIDAR data found for Sensor ID {ego_lidar_id}.")
         else:
             try:
-                # process and adde ego lidar data
+                # Process and add ego lidar data
                 ego_lidar_array = np.frombuffer(bytearray(ego_lidar_data), dtype=np.float32).reshape(-1, 4)
                 combined_lidar = ego_lidar_array
-                # logging.info(f"Ego LIDAR data processed with {ego_lidar_array} points.")
+                logging.info(f"Ego LIDAR data processed with {ego_lidar_array.shape[0]} points.")
+
+                # Extract bounding boxes for the ego vehicle
+                ego_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(self.ego_vehicle)
+                if ego_bounding_boxes:
+                    bounding_boxes.extend(ego_bounding_boxes)
+                    logging.info(f"Ego vehicle bounding boxes extracted: {len(ego_bounding_boxes)}.")
+                else:
+                    logging.warning("No bounding boxes extracted for the ego vehicle.")
             except Exception as e:
                 logging.error(f"Error processing ego LIDAR data: {e}")
         
         # Process smart vehicles' LIDAR data
         for vehicle_label, lidar_points in self.lidar_data_proximity.items():
             if vehicle_label not in self.vehicle_mapping:
-                logging.warning(f"Vehicle label {vehicle_label} not found in vehicle mapping. Skipping.")
+                logging.warning(f"Vehicle label {vehicle_label} not found in mapping. Skipping.")
                 continue
             try:
-                # convert list to numpy array for reshaping and manipulation
+                # Convert list to numpy array for reshaping and manipulation
                 smart_lidar_array = np.frombuffer(bytearray(lidar_points), dtype=np.float32).reshape(-1, 4)
-                # compute relative pose
+
+                # Compute relative pose
                 relative_pose = self.compute_relative_pose(vehicle_label)
                 relative_position = relative_pose["relative_position"]
                 relative_yaw = relative_pose["relative_yaw"]
 
                 # Transform lidar points
                 transformed_points = self.transform_lidar_points(smart_lidar_array, relative_position, relative_yaw)
-                # Save the transformed LiDAR frame for debugging
-                logging.info(f"Transformed LiDAR frame saved for vehicle {vehicle_label}.")
-                combined_lidar = np.vstack((combined_lidar, transformed_points))
+                combined_lidar = np.vstack((combined_lidar, transformed_points)) if combined_lidar is not None else transformed_points
 
-                self.save_lidar_frames(
-                    combined_lidar,
-                    frame_size=(1920, 1080),
-                    output_dir="combined_lidar_frames"
-                )
+                # Extract bounding boxes for the smart vehicle
+                vehicle_actor = self.proximity_mapping.world.get_actor(self.vehicle_mapping[vehicle_label]["actor_id"])
+                if vehicle_actor:
+                    vehicle_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(vehicle_actor)
+                    if vehicle_bounding_boxes:
+                        bounding_boxes.extend(vehicle_bounding_boxes)
+                        logging.info(f"Bounding boxes extracted for vehicle {vehicle_label}: {len(vehicle_bounding_boxes)}.")
+                    else:
+                        logging.warning(f"No bounding boxes extracted for vehicle {vehicle_label}.")
+                else:
+                    logging.warning(f"Vehicle actor not found for {vehicle_label}.")
             except Exception as e:
                 logging.error(f"Error processing LIDAR data for vehicle {vehicle_label}: {e}")
 
+        # Save the combined LiDAR frame
+        if combined_lidar is not None:
+            save_lidar_frames(
+                lidar_points=combined_lidar,
+                frame_size=(1920, 1080),
+                output_dir="combined_lidar_frames"
+            )
+
+        # Save the combined bounding boxes
+        if bounding_boxes:
+            self.bounding_box_extractor.save_bounding_boxes(
+                bounding_boxes=bounding_boxes,
+                output_dir="combined_bounding_boxes"
+            )
+            logging.info(f"Total bounding boxes saved: {len(bounding_boxes)}.")
+        else:
+            logging.warning("No bounding boxes extracted.")
+
         logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
-        
         return combined_lidar
+
 
     def start_listener(self):
         """
