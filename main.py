@@ -5,7 +5,7 @@ import numpy as np
 import logging
 import argparse
 import threading
-from queue import Queue
+from queue import Queue, Empty
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 import time
@@ -202,37 +202,48 @@ def preprocess_fused_results(fused_results):
     logging.debug(f"Preprocessed obstacle positions: {obstacle_positions}")
     return obstacle_positions
 
-def obstacle_detection_worker(camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion):
-    try:
-        logging.info(f"Performing obstacle detection using DataFusion with {lidar_data.shape[0]} LiDAR points.")
+# Define obstacle_worker 
+def obstacle_worker(obstacle_detection_queue):
+    """Worker to process obstacle detection from the queue."""
+    while True:
+        try:
+            # Get data from the queue with timeout
+            task = obstacle_detection_queue.get(timeout=1)  # Adjust timeout as needed
+            if task is None:
+                break  # Exit the loop when a None signal is sent
 
-        # Ensure DataFusion has access to updated combined LiDAR data
-        if data_fusion.lidar_detector.combined_lidar_data is None:
-            data_fusion.lidar_detector.update_combined_lidar_data(lidar_data)
+            (camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion) = task
 
-        # Perform data fusion
-        fused_results = data_fusion.fuse_data(camera_frame, lidar_data)
-        logging.debug(f"Fused obstacle detection results: {fused_results}")
+            # Perform obstacle detection
+            try:
+                logging.info(f"Processing frame {frame_number} in the obstacle worker.")
+                fused_results = data_fusion.fuse_data(camera_frame, lidar_data)
 
-        # Fetch ego vehicle's location
-        ego_vehicle_location = {
-            "x": ego_vehicle.get_transform().location.x,
-            "y": ego_vehicle.get_transform().location.y,
-            "z": ego_vehicle.get_transform().location.z
-        }
+                # Log obstacle detection results
+                logging.info(f"Obstacle detection completed for frame {frame_number}. Fused results: {fused_results}")
 
-        # Preprocess fused results into obstacle positions
-        obstacle_positions = preprocess_fused_results(fused_results)
+                # Update occupancy grid
+                ego_vehicle_location = {
+                    "x": ego_vehicle.get_transform().location.x,
+                    "y": ego_vehicle.get_transform().location.y,
+                    "z": ego_vehicle.get_transform().location.z
+                }
+                obstacle_positions = preprocess_fused_results(fused_results)
+                occupancy_grid.update_with_obstacles(obstacle_positions, ego_vehicle_location)
 
-        # Update occupancy grid map with obstacle positions
-        occupancy_grid.update_with_obstacles(obstacle_positions, ego_vehicle_location)
+                # Overlay and save the occupancy grid on the camera frame
+                combined_image = overlay_grid.overlay_on_image(camera_frame)
+                overlay_grid.save_frame(combined_image, frame_number)
 
-        # Overlay and save the occupancy grid on the camera frame
-        combined_image = overlay_grid.overlay_on_image(camera_frame)
-        overlay_grid.save_frame(combined_image, frame_number)
-        logging.info(f"Frame {frame_number} saved successfully with occupancy grid overlay.")
-    except Exception as e:
-        logging.error(f"Error in obstacle detection: {e}")
+            except Exception as e:
+                logging.error(f"Error in obstacle detection for frame {frame_number}: {e}")
+            finally:
+                # Signal that this task is done
+                obstacle_detection_queue.task_done()
+
+        except Empty:
+            # Timeout reached while waiting for queue items
+            continue
 
 def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, 
               ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, camera_data_buffer, camera_data_lock,
@@ -249,8 +260,9 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     proximity_state = {}  # Proximity tracking state
 
     #Initialise thread pool and queue for obstacle detection
-    executor = ThreadPoolExecutor(max_workers=2)
-    obstacle_detection_queue = Queue(maxsize=5)
+    obstacle_detection_queue = Queue(maxsize=50)
+    worker_thread = threading.Thread(target=obstacle_worker, daemon=True, args=(obstacle_detection_queue,))
+    worker_thread.start()
 
     # List of vehicle labels
     vehicle_keys = list(vehicle_mapping.keys())
@@ -266,15 +278,6 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     world_size = (50, 50)  # World size is 50x50 meters
     occupancy_grid = OccupancyGridMap(grid_size, cell_size, world_size)
     overlay_grid = OverlayGridOverlay(occupancy_grid, cell_size, world_size, save_folder="frames/occ_map")
-
-    def obstacle_worker():
-        """Worker to process obstacle detection from the queue."""
-        while not obstacle_detection_queue.empty():
-            (camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion) = obstacle_detection_queue.get()
-            try:
-                obstacle_detection_worker(camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion)
-            except Exception as e:
-                logging.error(f"Error in obstacle detection worker: {e}")
 
     try:
         while not crashed:
@@ -316,16 +319,12 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
                     logging.info(f"Performing obstacle detection using DataFusion with {lidar_data.shape[0]} LiDAR points.")
                     # Add data to the queue
                     # Log when queue is full
-                    if obstacle_detection_queue.full():
+                    if not obstacle_detection_queue.full():
+                        logging.info(f"Added frame {frame_number} to obstacle detection queue. Current queue size: {obstacle_detection_queue.qsize()}")
+                        obstacle_detection_queue.put_nowait((camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion))
+                        frame_number += 1
+                    else:
                         logging.warning("Obstacle detection queue has reached its maximum size. Skipping frame addition.")
-                        obstacle_detection_queue.get_nowait()  # Remove the oldest frame to make space
-                    
-                    # Add data to the queue
-                    obstacle_detection_queue.put((camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion))
-                    logging.info(f"Added frame {frame_number} to obstacle detection queue. Current queue size: {obstacle_detection_queue.qsize()}")
-                    
-                    #start worker thread for obstacle detection
-                    executor.submit(obstacle_detection_worker)
 
             except Exception as e:
                  logging.error(f"Error in obstacle detection setup: {e}")
