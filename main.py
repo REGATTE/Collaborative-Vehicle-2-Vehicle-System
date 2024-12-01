@@ -8,6 +8,7 @@ import threading
 from threading import Lock
 import time
 import os
+import json
 
 from agents.controller import ControlObject
 from agents.EnvironmentManager import EnvironmentManager
@@ -15,10 +16,11 @@ from agents.waypoint_manager import WaypointManager
 from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, spawn_walkers, cleanup
 from Simulation.sensors import Sensors
 from Simulation.ego_vehicle import EgoVehicleListener
+from Simulation.PathPlanning.obstacle_detection import DataFusion
 from utils.config.config_loader import load_config
 from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
-from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping
+from utils.vehicle_mapping.vehicle_mapping import save_vehicle_mapping, load_vehicle_mapping
 from utils.proximity_mapping import ProximityMapping
 from utils.bbox.bbox import BoundingBoxExtractor
 from carla_birdeye_view import BirdViewProducer, BirdViewCropType, PixelDimensions
@@ -105,8 +107,83 @@ def attach_follow_camera(world, vehicle, camera_transform):
         logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
         return None, None
 
+def get_ego_vehicle_camera_frame(vehicle_mapping_path, camera_data_buffer, camera_data_lock):
+    """
+    Retrieve the latest camera frame from the ego vehicle's camera sensor.
+    :param vehicle_mapping_path: Path to the vehicle_mapping.json file.
+    :param camera_data_buffer: Shared buffer containing camera data from all sensors.
+    :param camera_data_lock: Thread lock for accessing the buffer safely.
+    :return: Numpy array containing the camera frame or None if no data is available.
+    """
+    try:
+        # Load the vehicle mapping from the JSON file
+        with open(vehicle_mapping_path, "r") as f:
+            vehicle_mapping = json.load(f)
+        
+        # Retrieve the camera sensor ID (3rd sensor)
+        camera_sensor_id = vehicle_mapping.get("ego_veh", {}).get("sensors", [])[2]
+        if not camera_sensor_id:
+            logging.warning("Camera sensor ID not found in vehicle mapping.")
+            return None
+
+        logging.info(f"Attempting to access camera data for Sensor ID {camera_sensor_id}.")
+
+        # Access the camera data buffer
+        with camera_data_lock:
+            processed_camera_frame = camera_data_buffer.get(camera_sensor_id, None)
+
+        if processed_camera_frame is None:
+            logging.warning(f"No camera data available for Sensor ID {camera_sensor_id}.")
+            return None
+
+        logging.info("Camera frame retrieved successfully.")
+        return processed_camera_frame
+
+    except FileNotFoundError:
+        logging.error(f"Vehicle mapping file not found: {vehicle_mapping_path}")
+        return None
+    except json.JSONDecodeError as e:
+        logging.error(f"Error decoding JSON from vehicle mapping: {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Error retrieving camera frame: {e}")
+        return None
+
+def get_ego_vehicle_lidar_data(lidar_data_buffer, lidar_data_lock):
+    """
+    Retrieve and process the LIDAR data for the ego vehicle from the lidar_data_buffer.
+    :param lidar_data_buffer: Shared buffer containing LIDAR data from all sensors.
+    :param lidar_data_lock: Thread lock for accessing the buffer safely.
+    :return: Numpy array containing processed LIDAR points ([x, y, z, i]) or an empty array if data is unavailable.
+    """
+    try:
+        lidar_sensor_id = 32  # Sensor key for the ego vehicle's LIDAR
+        logging.info(f"Attempting to access LIDAR data for Sensor ID {lidar_sensor_id}.")
+
+        # Access the LiDAR data from the buffer
+        with lidar_data_lock:
+            raw_lidar_data = lidar_data_buffer.get(lidar_sensor_id, [])
+
+        if not raw_lidar_data:
+            logging.warning(f"No LIDAR data available for Sensor ID {lidar_sensor_id}.")
+            return np.array([])  # Return an empty array if no data is found
+
+        # Convert raw data to a NumPy array
+        if isinstance(raw_lidar_data, memoryview):
+            logging.info("Converting memoryview LIDAR data to list.")
+            raw_lidar_data = list(raw_lidar_data)
+
+        lidar_array = np.frombuffer(bytearray(raw_lidar_data), dtype=np.float32).reshape(-1, 4)
+        logging.info(f"LIDAR data processed with {lidar_array.shape[0]} points.")
+        return lidar_array
+
+    except Exception as e:
+        logging.error(f"Error retrieving LIDAR data: {e}")
+        return np.array([])  # Return an empty array in case of error
+    
 def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, 
-              ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, waypoint_manager,birdview_producer = None):
+              ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, camera_data_buffer, camera_data_lock,
+              waypoint_manager,birdview_producer = None, data_fusion=None):
     """
     Main game loop for updating the CARLA world and PyGame display.
     """
@@ -153,6 +230,23 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
                 )
             except Exception as e:
                 logging.error(f"Error in proximity mapping: {e}")
+
+            # Obstacle detection with data fusion
+            try:
+                # Fetch ego vehicle data
+                camera_frame = get_ego_vehicle_camera_frame("utils/vehicle_mapping/vehicle_mapping.json", camera_data_buffer, camera_data_lock)
+                lidar_data = get_ego_vehicle_lidar_data(lidar_data_buffer, lidar_data_lock)
+
+                if camera_frame is not None and lidar_data is not None:
+                    logging.info(f"Performing obstacle detection using DataFusion with {lidar_data.shape[0]} LiDAR points.")
+                    # enure datafusion has access to updated combined lidar data
+                    if data_fusion.lidar_detector.combined_lidar_data is None:
+                        data_fusion.lidar_detector.update_combined_lidar_data(lidar_data)
+                    fused_results = data_fusion.fuse_data(camera_frame, lidar_data)
+                    logging.debug(f"Fused obstacle detection results: {fused_results}")
+            except Exception as e:
+                 logging.error(f"Error in obstacle detection: {e}")
+
             
             # Manage waypoints for smart vehicles
             try:
@@ -235,11 +329,14 @@ def main():
 
     # Environment manager
     env_manager = EnvironmentManager(world)
+    data_fusion_obs_det = DataFusion(vehicle_mapping_path="utils/vehicle_mapping/vehicle_mapping.json")
 
     # Initialize data buffers and tracking
     lidar_data_lock = Lock()
+    camera_data_lock = Lock()
     attached_sensors = []
     lidar_data_buffer = {}
+    camera_data_buffer = {}
 
     # Proximity mapping for LIDAR
     proximity_mapping = ProximityMapping(world, radius=20.0)
@@ -282,19 +379,33 @@ def main():
         crop_type=BirdViewCropType.FRONT_AND_REAR_AREA
         )
 
-    
-
     # Attach sensors
     sensors = Sensors()
     ego_vehicle_sensors = sensors.attach_sensor_suite(
-        world, ego_vehicle, "ego_veh", lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping
-    )
+        world, 
+        ego_vehicle, 
+        "ego_veh", 
+        lidar_data_buffer, 
+        lidar_data_lock, 
+        camera_data_buffer, 
+        camera_data_lock, 
+        attached_sensors, 
+        ego_vehicle, 
+        proximity_mapping)
     logging.info(f"Ego vehicle has {len(ego_vehicle_sensors)} sensors attached.")
 
     for idx, smart_vehicle in enumerate(smart_vehicles, start=1):
         vehicle_label = f"smart_veh_{idx}"
         smart_sensors = sensors.attach_sensor_suite(
-            world, smart_vehicle, vehicle_label, lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping
+            world, 
+            smart_vehicle, 
+            vehicle_label, 
+            lidar_data_buffer, 
+            lidar_data_lock, 
+            camera_data_buffer, 
+            camera_data_lock, 
+            attached_sensors, 
+            ego_vehicle, proximity_mapping
         )
         vehicle_mapping[vehicle_label]["sensors"] = smart_sensors
         logging.info(f"{vehicle_label} has {len(smart_sensors)} sensors attached.")
@@ -341,7 +452,8 @@ def main():
         game_loop(
             world, game_display, camera, render_object, control_object,
             vehicle_mapping, env_manager, ego_vehicle, smart_vehicles,
-            lidar_data_buffer, lidar_data_lock,  waypoint_manager, birdview_producer
+            lidar_data_buffer, lidar_data_lock, camera_data_buffer, camera_data_lock,
+            waypoint_manager, birdview_producer, data_fusion_obs_det
         )
 
         logging.info("Bounding boxes plotted on all frames.")

@@ -17,3 +17,4 @@ birdview_v2_cache/Carla/Maps/*
 
 # Ignore generated folders
 frames/*
+fused_results/*

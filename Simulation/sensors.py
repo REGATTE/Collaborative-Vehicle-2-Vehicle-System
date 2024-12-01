@@ -72,6 +72,27 @@ class Sensors:
         except Exception as e:
             logging.error(f"Error attaching camera to Vehicle ID: {vehicle.id}: {e}")
             return None
+    
+    def camera_callback(self, data, sensor_id, camera_data_buffer, camera_data_lock):
+        """
+        Callback function to process camera data, keyed by sensor ID.
+        :param data: The raw camera data.
+        :param sensor_id: The ID of the camera sensor.
+        :param camera_data_buffer: Shared buffer to store processed camera frames.
+        :param camera_data_lock: Thread lock for thread-safe access to the buffer.
+        """
+        try:
+            # Convert raw data to a NumPy array
+            frame = np.array(data.raw_data).reshape((data.height, data.width, 4))[:, :, :3]  # Extract RGB channels
+            logging.info(f"Processed camera frame for Sensor ID {sensor_id}.")
+
+            # Store processed frame in the buffer
+            with camera_data_lock:
+                camera_data_buffer[sensor_id] = frame
+
+        except Exception as e:
+            logging.error(f"Error in camera_callback for Sensor ID {sensor_id}: {e}")
+
 
     def attach_lidar(self, world, vehicle, lidar_config, transform):
         """
@@ -161,7 +182,7 @@ class Sensors:
             logging.error(f"Error attaching GNSS to Vehicle ID: {vehicle.id}: {e}")
             return None
 
-    def attach_sensor_suite(self, world, vehicle, vehicle_label, lidar_data_buffer, lidar_data_lock, attached_sensors, ego_vehicle, proximity_mapping):
+    def attach_sensor_suite(self, world, vehicle, vehicle_label, lidar_data_buffer, lidar_data_lock, camera_data_buffer, camera_data_lock, attached_sensors, ego_vehicle, proximity_mapping):
         """
         Attaches a full sensor suite (Camera, LiDAR, GNSS) to the vehicle.
         """
@@ -236,8 +257,15 @@ class Sensors:
                         vehicle_sensors.append(camera)
                         attached_sensors.append(camera)
                         logging.info(f"Camera attached with ID: {camera.id} to Vehicle ID: {vehicle.id}")
+
+                        # Attach the callback for the 3rd sensor (Center Camera)
+                        if sensor_config.get('id') == 'Center':
+                            camera.listen(
+                                lambda data: self.camera_callback(data, 31, camera_data_buffer, camera_data_lock)  # Assuming 31 is the sensor ID
+                            )
                     else:
                         logging.warning(f"Failed to attach camera to Vehicle ID: {vehicle.id}")
+
 
                 elif sensor_type == "sensor.other.gnss":
                     # Attach GNSS sensor

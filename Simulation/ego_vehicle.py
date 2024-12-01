@@ -19,6 +19,8 @@ frames_dir = "combined_lidar_frames"
 bboxes_dir = "combined_bounding_boxes"
 output_dir = "frames_with_bboxes"
 
+data_fusion = DataFusion(vehicle_mapping_path="utils/vehicle_mapping/vehicle_mapping.json")
+
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -528,60 +530,20 @@ class EgoVehicleListener:
 
             # combined lidar data when available
             combined_lidar = self.combine_lidar_data(self.ego_vehicle)
-            if combined_lidar:
-                logging.info(f"Path planning can now use combined LIDAR data with {len(combined_lidar)} points.")
-                self.trigger_obstacle_detection(combined_lidar)
-            else:
-                logging.warning(
-                    "No combined LiDAR data available. Falling back to ego vehicle LiDAR data."
-                )
-            
-            # fallback to ego vehicle lidar for obstacle detection and evasion
-            ego_lidar_data = self.get_ego_vehicle_lidar_data()
 
-            if ego_lidar_data:
-                logging.info(f"Fallback to ego vehicle LIDAR data with {len(ego_lidar_data)} points.")
-                self.trigger_obstacle_detection(ego_lidar_data)
+            if combined_lidar:
+                logging.info(f"Updating DataFusion with combined LIDAR data.")
+                self.data_fusion.lidar_detector.update_combined_lidar_data(combined_lidar)
+            else:
+                logging.warning("No combined LIDAR data available.")
         except Exception as e:
             logging.error(f"Error processing data for {vehicle_label}: {e}")
-    
-    def get_ego_vehicle_lidar_data(self):
-        """
-        Retrieve and process the LiDAR data for the ego vehicle.
-        :return: Numpy array containing processed LIDAR points ([x, y, z, i]) or an empty array if data is unavailable.
-        """
-        try:
-            ego_lidar_id = 32  # Force mapping for testing
-            logging.info(f"get_ego_vehicle_lidar_data: Attempting to access data for Sensor ID {ego_lidar_id}.")
-
-            # Access LiDAR data from the buffer with thread safety
-            with self.lidar_data_lock:
-                ego_lidar_data = self.lidar_data_buffer.get(ego_lidar_id, [])
-
-            # Convert to list if the data is a memoryview
-            if isinstance(ego_lidar_data, memoryview):
-                logging.info("Converting ego lidar data to list")
-                ego_lidar_data = list(ego_lidar_data)
-
-            if not ego_lidar_data:
-                logging.warning(f"No LIDAR data found for Sensor ID {ego_lidar_id}.")
-                return np.array([])  # Return an empty array if no data is available
-
-            # Process the LiDAR data into a numpy array
-            ego_lidar_array = np.frombuffer(bytearray(ego_lidar_data), dtype=np.float32).reshape(-1, 4)
-            logging.info(f"Ego LIDAR data processed with {ego_lidar_array.shape[0]} points.")
-
-            return ego_lidar_array
-
-        except Exception as e:
-            logging.error(f"Error retrieving ego vehicle LIDAR data: {e}")
-            return np.array([])  # Return an empty array in case of an error
 
     def trigger_obstacle_detection(self, lidar_data):
         """
         Placeholder for path planning logic using combined LiDAR data.
         """
-        logging.info(f"Triggering path planning with {len(combined_lidar)} combined LIDAR points.")
+        logging.info(f"Triggering path planning with {len(lidar_data)} combined LIDAR points.")
 
     def _get_all_valid_actors(self):
         """

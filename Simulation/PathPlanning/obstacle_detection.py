@@ -4,6 +4,7 @@ import torch
 import torchvision.transforms as T
 from torchvision.models.detection import ssd300_vgg16
 import os, logging
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -87,6 +88,7 @@ class LidarObstacleDetection:
         self.confidence_threshold = confidence_threshold
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.detector = self._load_lidar_model()
+        self.combined_lidar_data = None
 
     def _load_lidar_model(self):
         logging.info("Loading LiDAR detection model...")
@@ -245,21 +247,42 @@ class DataFusion:
         logging.info(f"Matched detections: {len(matched)}. Unmatched camera: {len(unmatched_camera)}. Unmatched LiDAR: {len(unmatched_lidar)}.")
         return matched, unmatched_camera, unmatched_lidar
 
-    def _save_results(self, results, save_folder):
+    def _save_results(self, fused_results, save_folder):
         """
-        Save the fused results to a JSON file in the specified folder.
+        Save the fused detection results to a JSON file with a unique timestamp-based name.
 
-        :param results: List of fused detection results.
+        :param fused_results: Dictionary containing matched, unmatched, and sensor-specific results.
         :param save_folder: Folder where the JSON file will be saved.
         """
-        logging.info("Saving fused results to JSON file...")
+        logging.info("Saving fused detection results to a JSON file...")
+
         # Ensure the save folder exists
         os.makedirs(save_folder, exist_ok=True)
 
-        # Define the output file name
-        output_file = os.path.join(save_folder, "fused_results.json")
+        # Generate a unique filename with the current timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(save_folder, f"fused_results_{timestamp}.json")
 
-        # Save results to the JSON file
-        with open(output_file, "w") as f:
-            json.dump(results, f, indent=4)
-        logging.info(f"Fused results saved to {output_file}")
+        # Helper function to convert non-serializable types
+        def convert_to_serializable(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)  # Convert numpy integers to Python int
+            elif isinstance(obj, np.floating):
+                return float(obj)  # Convert numpy floats to Python float
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()  # Convert numpy arrays to lists
+            elif isinstance(obj, set):
+                return list(obj)  # Convert sets to lists
+            else:
+                raise TypeError(f"Type {type(obj)} not serializable")
+
+        try:
+            # Save fused results to the JSON file with a custom converter
+            with open(output_file, "w") as f:
+                json.dump(fused_results, f, indent=4, default=convert_to_serializable)
+            logging.info(f"Fused detection results saved to {output_file}")
+
+        except TypeError as e:
+            logging.error(f"Error saving fused results: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error while saving fused results: {e}")
