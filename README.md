@@ -77,7 +77,7 @@ Ego Car BEV Visualisation
 
 Combined data LiDAR View
 
-![Combined lidar view](docs/Images/combined_lidar_frame.png)
+![Combined lidar view](docs/Images/combined_lidar_frames_with_Gt_boxes.png)
 
 ## Errors 
 
