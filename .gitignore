@@ -15,3 +15,10 @@ __pycache__/
 utils/vehicle_mapping/vehicle_mapping.json
 birdview_v2_cache/Carla/Maps/*
 
+# Ignore generated folders
+combined_lidar_frames/*
+gt_bounding_boxes/*
+frames_with_gt_bboxes/*
+det_bounding_boxes/*
+frames_with_det_bboxes/*
+frames/*
