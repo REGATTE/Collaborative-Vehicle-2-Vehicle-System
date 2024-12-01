@@ -238,9 +238,17 @@ class DataFusion:
                 if iou > best_iou:
                     best_iou = iou
                     best_lidar_det = lidar_det
+                
+                # Log the IoU score for the current camera-LiDAR pair
+                logging.debug(f"Camera Detection: {cam_det['bbox']} vs LiDAR Detection: {lidar_det['bbox']} -> IoU: {iou}")
 
+            # If a match is found, log and save the best IoU along with the detections
             if best_iou >= self.iou_threshold and best_lidar_det:
-                matched.append({"camera": cam_det, "lidar": best_lidar_det})
+                matched.append({
+                    "camera": cam_det, 
+                    "lidar": best_lidar_det, 
+                    "iou": best_iou  # Save the best IoU score for the matched pair
+                })
                 unmatched_lidar.remove(best_lidar_det)
             else:
                 unmatched_camera.append(cam_det)

@@ -84,7 +84,7 @@ class Sensors:
         try:
             # Convert raw data to a NumPy array
             frame = np.array(data.raw_data).reshape((data.height, data.width, 4))[:, :, :3]  # Extract RGB channels
-            logging.info(f"Processed camera frame for Sensor ID {sensor_id}.")
+            # logging.info(f"Processed camera frame for Sensor ID {sensor_id}.")
 
             # Store processed frame in the buffer
             with camera_data_lock:
