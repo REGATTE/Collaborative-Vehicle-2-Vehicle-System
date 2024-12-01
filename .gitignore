@@ -21,3 +21,4 @@ gt_bounding_boxes/*
 frames_with_gt_bboxes/*
 det_bounding_boxes/*
 frames_with_det_bboxes/*
+frames/*

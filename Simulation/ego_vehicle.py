@@ -5,6 +5,7 @@ import json
 import numpy as np
 import time
 import os, sys, cv2
+import logging
 
 from utils.proximity_mapping import ProximityMapping
 from utils.vehicle_mapping.vehicle_mapping import load_vehicle_mapping
@@ -16,6 +17,9 @@ from utils.save_frame import save_lidar_frames
 frames_dir = "combined_lidar_frames"
 bboxes_dir = "combined_bounding_boxes"
 output_dir = "frames_with_bboxes"
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 class EgoVehicleListener:
     def __init__(self, lidar_data_buffer, lidar_data_lock, host='127.0.0.1', port=65432, ego_vehicle=None, world=None, lidar_range=400):
@@ -75,7 +79,9 @@ class EgoVehicleListener:
 
     def compute_relative_pose(self, vehicle_label):
         """
-        Computes the pose of the smart vehicle relative to the ego vehicle.
+        Computes the pose of the smart vehicle relative to the ego vehicle using global positions.
+        Ensures the smart vehicle's position is relative to the ego vehicle's position.
+
         :param vehicle_label: Label of the smart vehicle.
         :return: Dictionary with relative position and rotation.
         """
@@ -83,34 +89,65 @@ class EgoVehicleListener:
         if not vehicle_data:
             raise ValueError(f"Vehicle label {vehicle_label} not found in mapping.")
 
-        vehicle_position = np.array([
-            vehicle_data["initial_position"]["x"],
-            vehicle_data["initial_position"]["y"],
-            vehicle_data["initial_position"]["z"]
+        # Fetch the actor ID
+        actor_id = vehicle_data.get("actor_id")
+        if actor_id is None:
+            logger.error(f"Actor ID not found for vehicle {vehicle_label}")
+            raise ValueError(f"Actor ID is missing for vehicle {vehicle_label}")
+
+        # Get the smart vehicle actor and its current transform
+        smart_vehicle = self.world.get_actor(actor_id)
+        if smart_vehicle is None:
+            logger.error(f"Actor with ID {actor_id} not found in the simulation for {vehicle_label}")
+            raise ValueError(f"Smart vehicle with actor ID {actor_id} not found")
+
+        smart_transform = smart_vehicle.get_transform()
+        smart_position = np.array([
+            smart_transform.location.x,
+            smart_transform.location.y,
+            smart_transform.location.z
         ])
+        smart_yaw = smart_transform.rotation.yaw
+
+        # Get the global position of the ego vehicle
         ego_transform = self.ego_vehicle.get_transform()
         ego_position = np.array([
             ego_transform.location.x,
             ego_transform.location.y,
             ego_transform.location.z
         ])
-
-        # Extract yaw angles
-        vehicle_yaw = vehicle_data.get("rotation", {}).get("yaw", 0)  # Default to 0 if yaw is missing
         ego_yaw = ego_transform.rotation.yaw
 
-        # Compute relative position
-        delta_position = vehicle_position - ego_position
+        # Compute delta position (global position difference)
+        delta_position = smart_position - ego_position
+
+        # Convert ego yaw to radians
         ego_yaw_rad = np.radians(ego_yaw)
-        rotation_matrix = np.array([
+
+        # Rotation matrix for ego vehicle's orientation
+        ego_rotation_matrix = np.array([
             [np.cos(ego_yaw_rad), np.sin(ego_yaw_rad), 0],
             [-np.sin(ego_yaw_rad), np.cos(ego_yaw_rad), 0],
             [0, 0, 1]
         ])
-        relative_position = np.dot(rotation_matrix, delta_position)
+
+        # Transform the delta position into the ego vehicle's coordinate frame
+        relative_position = np.dot(ego_rotation_matrix, delta_position)
 
         # Compute relative yaw
-        relative_yaw = vehicle_yaw - ego_yaw
+        relative_yaw = smart_yaw - ego_yaw
+
+        # normalize realtive yaw to [-180, 180]
+        relative_yaw = (relative_yaw + 180) % 360 - 180
+
+
+        # Log details for debugging
+        logger.debug(f"Global Smart Vehicle Position: {smart_position}")
+        logger.debug(f"Global Ego Vehicle Position: {ego_position}")
+        logger.debug(f"Delta Position (Global): {delta_position}")
+        logger.debug(f"Relative Position (Ego Frame): {relative_position}")
+        logger.debug(f"Smart Vehicle Yaw: {smart_yaw}°, Ego Vehicle Yaw: {ego_yaw}°")
+        logger.debug(f"Relative Yaw: {relative_yaw}°")
 
         return {
             "relative_position": {
@@ -120,32 +157,41 @@ class EgoVehicleListener:
             },
             "relative_yaw": relative_yaw
         }
-    
+
     def transform_lidar_points(self, lidar_points, relative_position, relative_yaw):
         """
         Transforms LIDAR points (in XYZI format) from a smart vehicle to the ego vehicle's coordinate frame.
 
-        :param lidar_points: List or NumPy array of LIDAR points in XYZI format.
+        :param lidar_points: NumPy array of LIDAR points in XYZI format.
         :param relative_position: Dictionary with keys 'x', 'y', 'z' indicating the translation vector.
         :param relative_yaw: Relative yaw angle in degrees.
         :return: Transformed LIDAR points in XYZI format.
         """
+        # Validate inputs
+        if lidar_points.ndim != 2 or lidar_points.shape[1] != 4:
+            raise ValueError("LIDAR points must be a 2D array with 4 columns (XYZI format).")
+
         relative_yaw_rad = np.radians(relative_yaw)
+
+        # Create rotation matrix
         rotation_matrix = np.array([
             [np.cos(relative_yaw_rad), -np.sin(relative_yaw_rad), 0],
             [np.sin(relative_yaw_rad),  np.cos(relative_yaw_rad), 0],
             [0, 0, 1]
         ])
 
-        # Convert lidar points to a NumPy array
+        # Convert lidar points to NumPy array
         lidar_points = np.array(lidar_points)
 
         # Split LIDAR data into XYZ and I (Intensity)
         xyz_points = lidar_points[:, :3]  # Extract X, Y, Z
         intensity = lidar_points[:, 3]    # Extract Intensity (I)
 
+        logger.debug(f"First 5 raw LIDAR points:\n{lidar_points[:5]}")
+
         # Apply rotation matrix to all points
         rotated_points = np.dot(xyz_points, rotation_matrix.T)
+        logger.debug(f"First 5 rotated points:\n{rotated_points[:5]}")
 
         # Add translation (relative position)
         translated_points = rotated_points + np.array([
@@ -155,7 +201,9 @@ class EgoVehicleListener:
         ])
 
         # Combine the transformed XYZ with the original intensity
-        return np.hstack((translated_points, intensity.reshape(-1, 1)))
+        transformed_points = np.hstack((translated_points, intensity.reshape(-1, 1)))
+
+        return transformed_points
 
     def combine_lidar_data(self, ego_vehicle):
         """
@@ -237,7 +285,7 @@ class EgoVehicleListener:
             frame_file = save_lidar_frames(
                 lidar_points=combined_lidar,
                 frame_size=(1920, 1080),
-                output_dir="combined_lidar_frames"
+                output_dir="frames/combined_lidar_frames"
             )
 
         # Save gt bounding boxes separately
@@ -245,7 +293,7 @@ class EgoVehicleListener:
         if gt_bounding_boxes:
             gt_bbox_file = self.bounding_box_extractor.save_bounding_boxes(
                 bounding_boxes=gt_bounding_boxes,
-                output_dir="gt_bounding_boxes"
+                output_dir="frames/gt_bounding_boxes"
             )
             if gt_bbox_file:
                 logging.info(f"GT Bounding boxes saved: {gt_bbox_file}.")
@@ -257,9 +305,9 @@ class EgoVehicleListener:
         # Save the frame with gt bounding boxes plotted
         if frame_file and gt_bbox_file:
             logging.debug(f"Both frame_file and bbox_file are available. Proceeding to plot bounding boxes.")
-            frame_path = os.path.join("combined_lidar_frames", frame_file)
-            gt_bbox_path = os.path.join("combined_bounding_boxes", gt_bbox_file)
-            output_dir = "frames_with_gt_bboxes"
+            frame_path = os.path.join("frames/combined_lidar_frames", frame_file)
+            gt_bbox_path = os.path.join("frames/gt_bounding_boxes", gt_bbox_file)
+            output_dir = "frames/frames_with_gt_bboxes"
 
             logging.debug(f"Frame path: {frame_path}")
             logging.debug(f"Bounding boxes path: {gt_bbox_path}")
@@ -286,7 +334,7 @@ class EgoVehicleListener:
 
         logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
 
-        lidar_det_bounding_box_detector = LidarBoundingBoxDetector(output_dir="det_bounding_boxes")
+        lidar_det_bounding_box_detector = LidarBoundingBoxDetector(output_dir="frames/det_bounding_boxes")
         # Detect bounding boxes
         det_bounding_boxes = lidar_det_bounding_box_detector.detect_bounding_boxes(
             point_cloud=combined_lidar, eps=0.5, min_samples=10
@@ -296,7 +344,7 @@ class EgoVehicleListener:
         if det_bounding_boxes:
             det_bbox_file = lidar_det_bounding_box_detector.save_bounding_boxes(
                 bounding_boxes=det_bounding_boxes,
-                output_dir="det_bounding_boxes"
+                output_dir="frames/det_bounding_boxes"
             )
             if det_bbox_file:
                 logging.info(f"Det Bounding boxes saved: {det_bbox_file}.")
@@ -310,9 +358,9 @@ class EgoVehicleListener:
         # Save the frame with gt bounding boxes plotted
         if frame_file and det_bbox_file:
             logging.debug(f"Both frame_file and bbox_file are available. Proceeding to plot bounding boxes.")
-            frame_path = os.path.join("frames_with_gt_bboxes", frame_file)
-            det_bbox_path = os.path.join("combined_bounding_boxes", det_bbox_file)
-            output_dir = "frames_with_det_bboxes"
+            frame_path = os.path.join("frames/frames_with_gt_bboxes", frame_file)
+            det_bbox_path = os.path.join("frames/det_bounding_boxes", det_bbox_file)
+            output_dir = "frames/frames_with_det_bboxes"
 
             logging.debug(f"Frame path: {frame_path}")
             logging.debug(f"Det Bounding boxes path: {det_bbox_path}")

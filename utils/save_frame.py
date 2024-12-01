@@ -29,7 +29,7 @@ def project_lidar_to_2d(lidar_points, frame_size=(1920, 1080), lidar_range=400):
                 continue
 
             px = int((x + lidar_range / 2) * scale_x)
-            py = int((lidar_range / 2 - y) * scale_y)
+            py = int((y + lidar_range / 2) * scale_y)
 
             # Ensure pixel coordinates are within bounds
             if 0 <= px < width and 0 <= py < height:
