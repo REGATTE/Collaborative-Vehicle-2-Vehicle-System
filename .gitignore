@@ -17,3 +17,4 @@ birdview_v2_cache/Carla/Maps/*
 
 # Ignore generated folders
 frames/*
+misc/* # Misc folder created for debugging and work progress
