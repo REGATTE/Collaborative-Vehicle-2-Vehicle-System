@@ -331,8 +331,8 @@ class BoundingBoxExtractor:
         corners_2d = []
         for corner in corners_3d:
             x, y, _ = corner
-            px = int((x + lidar_range / 2) * scale_x)
-            py = int((lidar_range / 2 - y) * scale_y)
+            px = int((-y + lidar_range / 2) * scale_x)  # Swap x and y, negate y
+            py = int((x + lidar_range / 2) * scale_y)  # Swap x and y, use x for py
             corners_2d.append((px, py))
 
         # Compute bounding box limits
