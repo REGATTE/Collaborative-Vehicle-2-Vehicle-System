@@ -131,7 +131,7 @@ class LidarBoundingBoxDetector:
                 )
                 x_min, y_min, x_max, y_max = self._project_bbox_to_2d(corners_3d, frame_size, lidar_range)
 
-                cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 0, 255), 2)
 
             os.makedirs(output_dir, exist_ok=True)
             output_frame_path = os.path.join(output_dir, os.path.basename(frame_path))
@@ -172,8 +172,8 @@ class LidarBoundingBoxDetector:
         corners_2d = []
         for corner in corners_3d:
             x, y, _ = corner
-            px = int((x + lidar_range / 2) * scale_x)
-            py = int((lidar_range / 2 - y) * scale_y)
+            px = int((lidar_range / 2 - y) * scale_x)
+            py = int((x + lidar_range / 2) * scale_y)
             corners_2d.append((px, py))
 
         corners_2d = np.array(corners_2d)
