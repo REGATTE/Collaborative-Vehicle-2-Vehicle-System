@@ -200,10 +200,7 @@ class EgoVehicleListener:
             relative_position['z']
         ])
 
-        # Combine the transformed XYZ with the original intensity
-        transformed_points = np.hstack((translated_points, intensity.reshape(-1, 1)))
-
-        return transformed_points
+        return np.hstack((translated_points, intensity.reshape(-1, 1)))
 
     def combine_lidar_data(self, ego_vehicle):
         """
@@ -213,21 +210,24 @@ class EgoVehicleListener:
         gt_bounding_boxes = []
         det_bounding_boxes = []
 
-        ego_location = {"x": ego_vehicle.get_transform().location.x, 
-                "y": ego_vehicle.get_transform().location.y, 
-                "z": ego_vehicle.get_transform().location.z}
+        ego_location = {
+            "x": self.ego_vehicle.get_transform().location.x,
+            "y": self.ego_vehicle.get_transform().location.y,
+            "z": self.ego_vehicle.get_transform().location.z
+        }
+        ego_yaw = self.ego_vehicle.get_transform().rotation.yaw
 
         # Access ego vehicle lidar data
         ego_lidar_id = 32  # Force mapping for testing
         logging.info(f"combine_lidar_data: Attempting to access data for Sensor ID {ego_lidar_id}.")
-        
+
         with self.lidar_data_lock:
             ego_lidar_data = self.lidar_data_buffer.get(ego_lidar_id, [])
         # Convert to list from memoryview
         if isinstance(ego_lidar_data, memoryview):
             logging.info("Converting ego lidar data to list")
             ego_lidar_data = list(ego_lidar_data)
-        
+
         if not ego_lidar_data:
             logging.warning(f"No LIDAR data found for Sensor ID {ego_lidar_id}.")
         else:
@@ -235,8 +235,9 @@ class EgoVehicleListener:
                 # Process and add ego lidar data
                 ego_lidar_array = np.frombuffer(bytearray(ego_lidar_data), dtype=np.float32).reshape(-1, 4)
                 combined_lidar = ego_lidar_array
-                logging.info(f"Ego LIDAR data processed with {ego_lidar_array.shape[0]} points.")
-
+                logging.info(
+                    f"Ego LIDAR data processed with {combined_lidar.shape[0]} points."
+                )
                 # Extract bounding boxes for the ego vehicle
                 ego_bounding_boxes = self.bounding_box_extractor.extract_bounding_boxes(self.ego_vehicle, ego_location)
                 if ego_bounding_boxes:
@@ -246,7 +247,7 @@ class EgoVehicleListener:
                     logging.warning("No bounding boxes extracted for the ego vehicle.")
             except Exception as e:
                 logging.error(f"Error processing ego LIDAR data: {e}")
-        
+
         # Process smart vehicles' LIDAR data
         for vehicle_label, lidar_points in self.lidar_data_proximity.items():
             if vehicle_label not in self.vehicle_mapping:
@@ -304,7 +305,9 @@ class EgoVehicleListener:
 
         # Save the frame with gt bounding boxes plotted
         if frame_file and gt_bbox_file:
-            logging.debug(f"Both frame_file and bbox_file are available. Proceeding to plot bounding boxes.")
+            logging.debug(
+                "Both frame_file and bbox_file are available. Proceeding to plot bounding boxes."
+            )
             frame_path = os.path.join("frames/combined_lidar_frames", frame_file)
             gt_bbox_path = os.path.join("frames/gt_bounding_boxes", gt_bbox_file)
             output_dir = "frames/frames_with_gt_bboxes"
@@ -333,41 +336,53 @@ class EgoVehicleListener:
                 logging.warning("GT Bounding boxes file is missing. Skipping frame with bounding boxes plotting.")
 
         logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
-
+        
+        # Initialize the Lidar Bounding Box Detector
         lidar_det_bounding_box_detector = LidarBoundingBoxDetector(output_dir="frames/det_bounding_boxes")
+        
         # Detect bounding boxes
-        det_bounding_boxes = lidar_det_bounding_box_detector.detect_bounding_boxes(
-            point_cloud=combined_lidar, eps=0.5, min_samples=10
-        )
+        try:
+            det_bounding_boxes = lidar_det_bounding_box_detector.detect_and_transform_bounding_boxes(
+                point_cloud=combined_lidar,
+                ego_location=ego_location,
+                ego_yaw=ego_yaw,
+                eps=0.5,
+                min_samples=10
+            )
+            logging.info(f"Detected {len(det_bounding_boxes)} bounding boxes.")
+        except Exception as e:
+            logging.error(f"Error during bounding box detection: {e}")
+            det_bounding_boxes = []
+        
         # Save detected bounding boxes
         det_bbox_file = None
         if det_bounding_boxes:
-            det_bbox_file = lidar_det_bounding_box_detector.save_bounding_boxes(
-                bounding_boxes=det_bounding_boxes,
-                output_dir="frames/det_bounding_boxes"
-            )
-            if det_bbox_file:
-                logging.info(f"Det Bounding boxes saved: {det_bbox_file}.")
-            else:
-                logging.warning("Det Bounding boxes were not saved correctly. File name is None.")
+            try:
+                det_bbox_file = lidar_det_bounding_box_detector.save_bounding_boxes(
+                    bounding_boxes=det_bounding_boxes,
+                    output_dir="frames/det_bounding_boxes"
+                )
+                if det_bbox_file:
+                    logging.info(f"Detected bounding boxes saved to file: {det_bbox_file}.")
+                else:
+                    logging.warning("Detected bounding boxes were not saved correctly. File name is None.")
+            except Exception as e:
+                logging.error(f"Failed to save detected bounding boxes. Error: {e}")
         else:
-            logging.warning("No det bounding boxes extracted.")
+            logging.warning("No detected bounding boxes extracted to save.")
 
-        #plot det bbox on gt lidar frame
-
-        # Save the frame with gt bounding boxes plotted
-        if frame_file and det_bbox_file:
-            logging.debug(f"Both frame_file and bbox_file are available. Proceeding to plot bounding boxes.")
+        # Plot detected bounding boxes on the ground truth LiDAR frame
+        if frame_file and det_bounding_boxes:
+            logging.debug("Both frame_file and detected bounding boxes are available. Proceeding to plot bounding boxes.")
             frame_path = os.path.join("frames/frames_with_gt_bboxes", frame_file)
-            det_bbox_path = os.path.join("frames/det_bounding_boxes", det_bbox_file)
             output_dir = "frames/frames_with_det_bboxes"
 
             logging.debug(f"Frame path: {frame_path}")
-            logging.debug(f"Det Bounding boxes path: {det_bbox_path}")
-            logging.debug(f"Output directory for frames with bounding boxes: {output_dir}")
+            logging.debug(f"Output directory for frames with detected bounding boxes: {output_dir}")
 
             try:
-                # Plot bounding boxes on the frame
+                # Plot detected bounding boxes on the frame
+                logging.info("Plotting bounding boxes on the LiDAR frame...")
                 lidar_det_bounding_box_detector.plot_bounding_boxes_on_lidar_frame(
                     frame_path=frame_path,
                     bounding_boxes=det_bounding_boxes,
@@ -376,19 +391,18 @@ class EgoVehicleListener:
                     ego_location=ego_location,
                     output_dir=output_dir
                 )
-                logging.info(f"Frame with gt bounding boxes saved successfully to: {output_dir}")
+                logging.info(f"Frame with detected bounding boxes saved successfully to: {output_dir}")
             except Exception as e:
-                logging.error(f"Failed to plot gt bounding boxes on frame. Error: {e}")
+                logging.error(f"Failed to plot detected bounding boxes on frame. Error: {e}")
         else:
             if not frame_file:
                 logging.warning("Frame file is missing. Skipping frame with bounding boxes plotting.")
-            if not det_bbox_file:
-                logging.warning("GT Bounding boxes file is missing. Skipping frame with bounding boxes plotting.")
+            if not det_bounding_boxes:
+                logging.warning("Detected bounding boxes are missing. Skipping frame with bounding boxes plotting.")
 
-        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points across all nearby vehicles.")
+        logging.info(f"Combined LIDAR Data: {len(combined_lidar)} points processed successfully.")
 
         return combined_lidar
-
 
     def start_listener(self):
         """
