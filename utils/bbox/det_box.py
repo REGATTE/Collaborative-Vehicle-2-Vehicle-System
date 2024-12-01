@@ -173,7 +173,7 @@ class LidarBoundingBoxDetector:
         for corner in corners_3d:
             x, y, _ = corner
             px = int((lidar_range / 2 - y) * scale_x)
-            py = int((x + lidar_range / 2) * scale_y)
+            py = int(((-x + lidar_range) / 2) * scale_y)
             corners_2d.append((px, py))
 
         corners_2d = np.array(corners_2d)
