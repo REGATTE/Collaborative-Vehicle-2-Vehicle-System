@@ -22,9 +22,10 @@ def compute_iou(box1, box2):
     iou = inter_area / union_area if union_area != 0 else 0
     return iou
 
-def main():
-    input_dir = 'misc/outputs'
+def test():
+    input_dir = '../misc/outputs'
     json_files = [f for f in os.listdir(input_dir) if f.endswith('.json')]
+    print(f'Found {len(json_files)} json files in {input_dir}')
 
     for json_file in json_files:
         with open(os.path.join(input_dir, json_file), 'r') as f:
@@ -35,4 +36,4 @@ def main():
             print(f'IoU for {json_file}: {iou}')
 
 if __name__ == "__main__":
-    main()
+    test()

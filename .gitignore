@@ -16,5 +16,6 @@ utils/vehicle_mapping/vehicle_mapping.json
 birdview_v2_cache/Carla/Maps/*
 
 # Ignore generated folders
+# Misc folder created for debugging and work progress
 frames/*
-misc/* # Misc folder created for debugging and work progress
+misc/* 
