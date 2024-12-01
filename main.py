@@ -5,6 +5,8 @@ import numpy as np
 import logging
 import argparse
 import threading
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 import time
 import os
@@ -17,6 +19,7 @@ from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, s
 from Simulation.sensors import Sensors
 from Simulation.ego_vehicle import EgoVehicleListener
 from Simulation.PathPlanning.obstacle_detection import DataFusion
+from Simulation.PathPlanning.occupancy_grid_mapping import OccupancyGridMap, OverlayGridOverlay
 from utils.config.config_loader import load_config
 from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
@@ -181,6 +184,56 @@ def get_ego_vehicle_lidar_data(lidar_data_buffer, lidar_data_lock):
         logging.error(f"Error retrieving LIDAR data: {e}")
         return np.array([])  # Return an empty array in case of error
     
+def preprocess_fused_results(fused_results):
+    """
+    Preprocess the fused results to extract obstacle positions.
+    :param fused_results: List of detection results from DataFusion.
+    :return: List of obstacle positions [(x, y), ...].
+    """
+    obstacle_positions = []
+
+    for result in fused_results:
+        if "bbox" in result:
+            # Extract bounding box center as obstacle position
+            x_center = (result["bbox"][0] + result["bbox"][2]) / 2
+            y_center = (result["bbox"][1] + result["bbox"][3]) / 2
+            obstacle_positions.append((x_center, y_center))
+
+    logging.debug(f"Preprocessed obstacle positions: {obstacle_positions}")
+    return obstacle_positions
+
+def obstacle_detection_worker(camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion):
+    try:
+        logging.info(f"Performing obstacle detection using DataFusion with {lidar_data.shape[0]} LiDAR points.")
+
+        # Ensure DataFusion has access to updated combined LiDAR data
+        if data_fusion.lidar_detector.combined_lidar_data is None:
+            data_fusion.lidar_detector.update_combined_lidar_data(lidar_data)
+
+        # Perform data fusion
+        fused_results = data_fusion.fuse_data(camera_frame, lidar_data)
+        logging.debug(f"Fused obstacle detection results: {fused_results}")
+
+        # Fetch ego vehicle's location
+        ego_vehicle_location = {
+            "x": ego_vehicle.get_transform().location.x,
+            "y": ego_vehicle.get_transform().location.y,
+            "z": ego_vehicle.get_transform().location.z
+        }
+
+        # Preprocess fused results into obstacle positions
+        obstacle_positions = preprocess_fused_results(fused_results)
+
+        # Update occupancy grid map with obstacle positions
+        occupancy_grid.update_with_obstacles(obstacle_positions, ego_vehicle_location)
+
+        # Overlay and save the occupancy grid on the camera frame
+        combined_image = overlay_grid.overlay_on_image(camera_frame)
+        overlay_grid.save_frame(combined_image, frame_number)
+        logging.info(f"Frame {frame_number} saved successfully with occupancy grid overlay.")
+    except Exception as e:
+        logging.error(f"Error in obstacle detection: {e}")
+
 def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, 
               ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, camera_data_buffer, camera_data_lock,
               waypoint_manager,birdview_producer = None, data_fusion=None):
@@ -195,12 +248,33 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     proximity_mapping = ProximityMapping(world, radius=20.0)
     proximity_state = {}  # Proximity tracking state
 
+    #Initialise thread pool and queue for obstacle detection
+    executor = ThreadPoolExecutor(max_workers=2)
+    obstacle_detection_queue = Queue(maxsize=5)
+
     # List of vehicle labels
     vehicle_keys = list(vehicle_mapping.keys())
     current_vehicle_index = 0
     active_vehicle_label = vehicle_keys[current_vehicle_index]
 
     bev_actor = ego_vehicle
+
+    # Initialize Occupancy Grid Map and Overlay
+    frame_number = 0
+    grid_size = (500, 500)  # 500x500 grid
+    cell_size = 0.1  # Each cell represents 0.1 meters
+    world_size = (50, 50)  # World size is 50x50 meters
+    occupancy_grid = OccupancyGridMap(grid_size, cell_size, world_size)
+    overlay_grid = OverlayGridOverlay(occupancy_grid, cell_size, world_size, save_folder="frames/occ_map")
+
+    def obstacle_worker():
+        """Worker to process obstacle detection from the queue."""
+        while not obstacle_detection_queue.empty():
+            (camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion) = obstacle_detection_queue.get()
+            try:
+                obstacle_detection_worker(camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion)
+            except Exception as e:
+                logging.error(f"Error in obstacle detection worker: {e}")
 
     try:
         while not crashed:
@@ -217,36 +291,44 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
             # Render the menu bar
             env_manager.draw_vehicle_labels_menu_bar(game_display, font, vehicle_mapping, width, active_vehicle_label)
 
-            # Proximity mapping and LIDAR logic
-            try:
-                proximity_mapping.log_proximity_and_trigger_communication(
-                    ego_vehicle,
-                    [smart_vehicle.id for smart_vehicle in smart_vehicles],
-                    world,
-                    proximity_state,
-                    vehicle_mapping,
-                    lidar_data_buffer,
-                    lidar_data_lock
-                )
-            except Exception as e:
-                logging.error(f"Error in proximity mapping: {e}")
+            # Proximity mapping and LIDAR logic (every 2nd frame)
+            if frame_number%2 == 0:
+                try:
+                    proximity_mapping.log_proximity_and_trigger_communication(
+                        ego_vehicle,
+                        [smart_vehicle.id for smart_vehicle in smart_vehicles],
+                        world,
+                        proximity_state,
+                        vehicle_mapping,
+                        lidar_data_buffer,
+                        lidar_data_lock
+                    )
+                except Exception as e:
+                    logging.error(f"Error in proximity mapping: {e}")
 
             # Obstacle detection with data fusion
+            # Fetch ego vehicle data
             try:
-                # Fetch ego vehicle data
                 camera_frame = get_ego_vehicle_camera_frame("utils/vehicle_mapping/vehicle_mapping.json", camera_data_buffer, camera_data_lock)
                 lidar_data = get_ego_vehicle_lidar_data(lidar_data_buffer, lidar_data_lock)
 
                 if camera_frame is not None and lidar_data is not None:
                     logging.info(f"Performing obstacle detection using DataFusion with {lidar_data.shape[0]} LiDAR points.")
-                    # enure datafusion has access to updated combined lidar data
-                    if data_fusion.lidar_detector.combined_lidar_data is None:
-                        data_fusion.lidar_detector.update_combined_lidar_data(lidar_data)
-                    fused_results = data_fusion.fuse_data(camera_frame, lidar_data)
-                    logging.debug(f"Fused obstacle detection results: {fused_results}")
-            except Exception as e:
-                 logging.error(f"Error in obstacle detection: {e}")
+                    # Add data to the queue
+                    # Log when queue is full
+                    if obstacle_detection_queue.full():
+                        logging.warning("Obstacle detection queue has reached its maximum size. Skipping frame addition.")
+                        obstacle_detection_queue.get_nowait()  # Remove the oldest frame to make space
+                    
+                    # Add data to the queue
+                    obstacle_detection_queue.put((camera_frame, lidar_data, ego_vehicle, occupancy_grid, overlay_grid, frame_number, data_fusion))
+                    logging.info(f"Added frame {frame_number} to obstacle detection queue. Current queue size: {obstacle_detection_queue.qsize()}")
+                    
+                    #start worker thread for obstacle detection
+                    executor.submit(obstacle_detection_worker)
 
+            except Exception as e:
+                 logging.error(f"Error in obstacle detection setup: {e}")
             
             # Manage waypoints for smart vehicles
             try:

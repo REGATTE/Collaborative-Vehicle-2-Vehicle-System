@@ -34,7 +34,7 @@ class Sensors:
             # LiDAR
             {
                 'type': 'sensor.lidar.ray_cast',
-                'transform': {'x': 0.7, 'y': 0.0, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
+                'transform': {'x': 0.0, 'y': 0.0, 'z': 1.6, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0},
                 'attributes': {
                     'range': 100, 'rotation_frequency': 20, 'channels': 128,
                     'upper_fov': 4, 'lower_fov': -20, 'points_per_second': 2304000
@@ -85,6 +85,7 @@ class Sensors:
             # Convert raw data to a NumPy array
             frame = np.array(data.raw_data).reshape((data.height, data.width, 4))[:, :, :3]  # Extract RGB channels
             # logging.info(f"Processed camera frame for Sensor ID {sensor_id}.")
+            frame = frame[:, :, ::-1]
 
             # Store processed frame in the buffer
             with camera_data_lock:

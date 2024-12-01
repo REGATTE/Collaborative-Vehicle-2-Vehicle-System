@@ -31,20 +31,45 @@ class OccupancyGridMap:
         logging.debug(f"Converted world coordinates ({x}, {y}) to grid coordinates ({i}, {j}).")
         return i, j
 
-    def update_with_obstacles(self, obstacles):
+    def update_with_obstacles(self, detections, ego_vehicle_location, image_width=1920, image_height=1080):
         """
-        Update the grid with detected obstacles.
-
-        :param obstacles: List of obstacle positions [(x, y), ...].
+        Update the occupancy grid based on detected obstacles.
+        :param detections: List of detected obstacles.
+        :param ego_vehicle_location: Ego vehicle's current world coordinates (x, y, z).
+        :param image_width: Width of the camera image (default: 1920).
+        :param image_height: Height of the camera image (default: 1080).
         """
         logging.info("Updating occupancy grid with detected obstacles...")
         updated_cells = 0
-        for obstacle in obstacles:
-            grid_x, grid_y = self._world_to_grid(obstacle[0], obstacle[1])
-            if 0 <= grid_x < self.grid_size[0] and 0 <= grid_y < self.grid_size[1]:
-                self.grid[grid_x, grid_y] = 1  # Mark cell as occupied
-                updated_cells += 1
+
+        for det in detections:
+            if "bbox" in det:
+                # Get the center of the bounding box in pixel space
+                bbox_center_x = (det["bbox"][0] + det["bbox"][2]) / 2  # X center of bbox
+                bbox_center_y = (det["bbox"][1] + det["bbox"][3]) / 2  # Y center of bbox
+
+                # Normalize to [0, 1]
+                normalized_x = bbox_center_x / image_width
+                normalized_y = bbox_center_y / image_height
+
+                # Map to world coordinates (assuming camera is forward-facing)
+                world_x = ego_vehicle_location[0] + (normalized_x - 0.5) * self.world_size[0]
+                world_y = ego_vehicle_location[1] - (normalized_y - 0.5) * self.world_size[1]
+
+                # Map to grid cell
+                grid_x = int(world_x / self.cell_size)
+                grid_y = int(world_y / self.cell_size)
+
+                # Ensure the cell is within bounds
+                if 0 <= grid_x < self.grid_width and 0 <= grid_y < self.grid_height:
+                    self.grid[grid_y, grid_x] = 1  # Mark cell as occupied
+                    updated_cells += 1
+
+                    # Logging for debugging
+                    logging.debug(f"Detection bbox: {det['bbox']}, World: ({world_x:.2f}, {world_y:.2f}), Grid: ({grid_x}, {grid_y})")
+
         logging.info(f"Updated {updated_cells} grid cells with obstacles.")
+
 
     def reset(self):
         """Reset the grid to all free cells."""
@@ -80,11 +105,14 @@ class OverlayGridOverlay:
         logging.info("Creating overlay for Occupancy Grid Map...")
         grid = self.grid_map.grid
         grid_height, grid_width = grid.shape
-        overlay = np.zeros((grid_height, grid_width, 3), dtype=np.uint8)
 
+        overlay = np.zeros((grid_height, grid_width, 3), dtype=np.uint8)
         for i in range(grid_height):
             for j in range(grid_width):
-                overlay[i, j] = (0, 0, 255) if grid[i, j] == 1 else (0, 255, 0)
+                if grid[i, j] == 1:  # Occupied cell
+                    overlay[i, j] = (0, 0, 255)  # Red
+                else:  # Free cell
+                    overlay[i, j] = (0, 255, 0)  # Green
         # Resize overlay to match the CARLA map/world dimensions
         logging.debug("Resizing overlay to match world dimensions.")
         overlay = cv2.resize(
@@ -100,18 +128,18 @@ class OverlayGridOverlay:
         :param base_image: The image to overlay the grid on (e.g., CARLA camera view).
         :return: Combined image.
         """
-        logging.info("Overlaying Occupancy Grid Map on the base image.")
+        logging.info("Overlaying Occupancy Grid Map on the base image...")
         overlay = self.create_overlay()
 
-        # Ensure both images have the same size
+        # Resize the overlay to match the base image dimensions
         overlay_resized = cv2.resize(overlay, (base_image.shape[1], base_image.shape[0]))
 
         # Add transparency to the overlay
-        alpha = 0.5
-        combined_image = cv2.addWeighted(base_image, 1.0, overlay_resized, alpha, 0)
+        alpha = 0.3  # Transparency level
+        combined_image = cv2.addWeighted(base_image, 0.7, overlay_resized, alpha, 0)
         logging.debug("Overlay created successfully.")
         return combined_image
-    
+
     def save_frame(self, combined_image, frame_number):
         """
         Save the overlaid image to a file.
