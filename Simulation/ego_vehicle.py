@@ -534,16 +534,13 @@ class EgoVehicleListener:
             if combined_lidar:
                 logging.info(f"Updating DataFusion with combined LIDAR data.")
                 self.data_fusion.lidar_detector.update_combined_lidar_data(combined_lidar)
+                self.send_combined_lidar_data(combined_lidar)
             else:
                 logging.warning("No combined LIDAR data available.")
         except Exception as e:
             logging.error(f"Error processing data for {vehicle_label}: {e}")
 
-    def trigger_obstacle_detection(self, lidar_data):
-        """
-        Placeholder for path planning logic using combined LiDAR data.
-        """
-        logging.info(f"Triggering path planning with {len(lidar_data)} combined LIDAR points.")
+    def self.
 
     def _get_all_valid_actors(self):
         """

@@ -6,9 +6,11 @@ import logging
 import argparse
 import threading
 from threading import Lock
+from multiprocessing import Manager
 import time
 import os
 import json
+import pickle, socket
 
 from agents.controller import ControlObject
 from agents.EnvironmentManager import EnvironmentManager
@@ -17,6 +19,7 @@ from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, s
 from Simulation.sensors import Sensors
 from Simulation.ego_vehicle import EgoVehicleListener
 from Simulation.PathPlanning.obstacle_detection import DataFusion
+from Simulation.PathPlanning.visualize_bev import BEVVisualizer, BEVRenderer
 from utils.config.config_loader import load_config
 from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
@@ -162,7 +165,7 @@ def get_ego_vehicle_lidar_data(lidar_data_buffer, lidar_data_lock):
 
         # Access the LiDAR data from the buffer
         with lidar_data_lock:
-            raw_lidar_data = lidar_data_buffer.get(lidar_sensor_id, [])
+            raw_lidar_data = lidar_data_buffer.get(lidar_sensor_id, None)
 
         if not raw_lidar_data:
             logging.warning(f"No LIDAR data available for Sensor ID {lidar_sensor_id}.")
@@ -174,13 +177,45 @@ def get_ego_vehicle_lidar_data(lidar_data_buffer, lidar_data_lock):
             raw_lidar_data = list(raw_lidar_data)
 
         lidar_array = np.frombuffer(bytearray(raw_lidar_data), dtype=np.float32).reshape(-1, 4)
-        logging.info(f"LIDAR data processed with {lidar_array.shape[0]} points.")
+
+        # Log details about the retrieved LiDAR data
+        logging.info(f"Successfully retrieved {lidar_array.shape[0]} LiDAR points for Sensor ID {lidar_sensor_id}.")
+        if lidar_array.size > 0:
+            logging.info(f"Sample LiDAR points (first 5): {lidar_array[:5]}")
         return lidar_array
 
     except Exception as e:
         logging.error(f"Error retrieving LIDAR data: {e}")
         return np.array([])  # Return an empty array in case of error
     
+def lidar_data_server(lidar_data_buffer, lidar_data_lock, host='127.0.0.1', port=65433):
+    """
+    Socket server to stream the entire LiDAR data buffer to connected clients.
+    """
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((host, port))
+    server.listen(1)
+    logging.info(f"LiDAR Data Server started on {host}:{port}")
+
+    conn, addr = server.accept()
+    logging.info(f"Client connected: {addr}")
+
+    try:
+        while True:
+            with lidar_data_lock:
+                # Serialize the entire LiDAR data buffer
+                data = pickle.dumps(dict(lidar_data_buffer))  # Convert to regular dict before serializing
+            conn.sendall(data + b"<END>")  # Add a delimiter for the end of the data
+            time.sleep(0.1)  # Throttle the data transfer
+    except Exception as e:
+        logging.error(f"Error in LiDAR Data Server: {e}")
+    finally:
+        conn.close()
+        server.close()
+        logging.info("LiDAR Data Server shut down.")
+
+
 def game_loop(world, game_display, camera, render_object, control_object, vehicle_mapping, env_manager, 
               ego_vehicle, smart_vehicles, lidar_data_buffer, lidar_data_lock, camera_data_buffer, camera_data_lock,
               waypoint_manager,birdview_producer = None, data_fusion=None):
@@ -330,13 +365,20 @@ def main():
     # Environment manager
     env_manager = EnvironmentManager(world)
     data_fusion_obs_det = DataFusion(vehicle_mapping_path="utils/vehicle_mapping/vehicle_mapping.json")
+    manager = Manager()
 
     # Initialize data buffers and tracking
     lidar_data_lock = Lock()
     camera_data_lock = Lock()
     attached_sensors = []
-    lidar_data_buffer = {}
-    camera_data_buffer = {}
+    lidar_data_buffer = manager.dict()
+    camera_data_buffer = manager.dict()
+
+    # Start the LiDAR Data Server in a separate thread
+    lidar_server_thread = threading.Thread(
+        target=lidar_data_server, args=(lidar_data_buffer, lidar_data_lock), daemon=True
+    )
+    lidar_server_thread.start()
 
     # Proximity mapping for LIDAR
     proximity_mapping = ProximityMapping(world, radius=20.0)

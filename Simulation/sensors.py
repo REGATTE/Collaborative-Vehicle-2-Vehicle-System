@@ -115,10 +115,11 @@ class Sensors:
         Callback function to process LIDAR data for the ego vehicle, keyed by sensor ID.
         """
         try:
+            # Convert memoryview to bytes to make it pickle-able
+            lidar_data_bytes = bytes(data.raw_data)
             with lidar_data_lock:
                 # Store raw LIDAR data, keyed by sensor ID
-                points = data.raw_data  # Access raw LIDAR data
-                lidar_data_buffer[sensor_id] = points  # Use sensor ID as the key
+                lidar_data_buffer[sensor_id] = lidar_data_bytes # Use sensor ID as the key
                 # logging.info(f"Ego LIDAR data stored for Sensor ID {sensor_id}: {len(points)} bytes.")
         except Exception as e:
             logging.error(f"Error in ego_lidar_callback for Sensor ID {sensor_id}: {e}")
@@ -151,13 +152,13 @@ class Sensors:
                     #logging.debug(f"Vehicle ID {vehicle_id} is not in proximity. Ignoring LIDAR data.")
                     return
                 # Process and store LIDAR data
-                points = data.raw_data  # Access raw LIDAR data
-                lidar_data_buffer[sensor_id] = points  # Key buffer by sensor ID
+                lidar_data_bytes = bytes(data.raw_data)  # Access raw LIDAR data
+                lidar_data_buffer[sensor_id] = lidar_data_bytes  # Key buffer by sensor ID
                 # Log the processed data
                 logging.info(
                     # f"LIDAR data buffer: {lidar_data_buffer}"
                     # f"Processed LIDAR data for Sensor ID {sensor_id} "
-                    f"(Vehicle ID {vehicle_id}): {len(points)} points. "
+                    f"(Vehicle ID {vehicle_id}): {len(lidar_data_bytes)} points. "
                     f"Distance to Ego: {vehicles_in_radius[vehicle_id][1]:.2f}m."
                 )
 
