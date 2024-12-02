@@ -121,25 +121,41 @@ class LidarObstacleDetection:
         return results
 
     def _preprocess_lidar_data(self, point_cloud, bev_image_size=(300, 300)):
-        logging.debug("Converting LiDAR point cloud to BEV image...")
-        x, y, intensity = point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 3]
-        x_min, x_max = x.min(), x.max()
-        y_min, y_max = y.min(), y.max()
-        x_scaled = ((x - x_min) / (x_max - x_min) * (bev_image_size[0] - 1)).astype(int)
-        y_scaled = ((y - y_min) / (y_max - y_min) * (bev_image_size[1] - 1)).astype(int)
+        logging.info("Converting LiDAR point cloud to BEV image...")
+        try:
+            # Ensure point_cloud has at least x, y, z, and intensity
+            if point_cloud.shape[1] < 4:
+                logging.warning("Point cloud has fewer than 4 columns. Defaulting intensity to 1.0.")
+                intensity = np.ones(point_cloud.shape[0])  # Default intensity
+            else:
+                intensity = point_cloud[:, 3]  # Use intensity if available
 
-        bev_image = np.zeros(bev_image_size, dtype=np.uint8)
-        bev_image[y_scaled, x_scaled] = (intensity * 255).astype(np.uint8)
-        bev_image = np.stack([bev_image] * 3, axis=-1)
+            x, y = point_cloud[:, 0], point_cloud[:, 1]
+            x_min, x_max = x.min(), x.max()
+            y_min, y_max = y.min(), y.max()
 
-        transform = T.Compose([
-            T.ToPILImage(),
-            T.Resize((300, 300)),
-            T.ToTensor(),
-            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ])
-        logging.debug("BEV image preprocessing completed.")
-        return transform(bev_image).unsqueeze(0).to(self.device)
+            # Scale coordinates to BEV image dimensions
+            x_scaled = ((x - x_min) / (x_max - x_min) * (bev_image_size[0] - 1)).astype(int)
+            y_scaled = ((y - y_min) / (y_max - y_min) * (bev_image_size[1] - 1)).astype(int)
+
+            # Initialize BEV image
+            bev_image = np.zeros(bev_image_size, dtype=np.uint8)
+            bev_image[y_scaled, x_scaled] = (intensity * 255).astype(np.uint8)
+            bev_image = np.stack([bev_image] * 3, axis=-1)
+
+            # Apply transformations
+            transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize((300, 300)),
+                T.ToTensor(),
+                T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ])
+            logging.info("BEV image preprocessing completed.")
+            return transform(bev_image).unsqueeze(0).to(self.device)
+        except Exception as e:
+            logging.error(f"BEV conversion failed: {e}")
+            return None
+
 
     def _postprocess_detections(self, detections, bev_image_size):
         labels = detections['labels'].cpu().numpy()
@@ -160,7 +176,7 @@ class LidarObstacleDetection:
                     ],
                     "confidence": float(score),
                 })
-        logging.debug(f"Postprocessed LiDAR detections: {results}")
+        logging.info(f"Postprocessed LiDAR detections: {results}")
         return results
 
 

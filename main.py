@@ -19,7 +19,7 @@ from Simulation.generate_traffic import setup_traffic_manager, spawn_vehicles, s
 from Simulation.sensors import Sensors
 from Simulation.ego_vehicle import EgoVehicleListener
 from Simulation.PathPlanning.obstacle_detection import DataFusion
-from Simulation.PathPlanning.occupancy_grid_mapping import OccupancyGridMap, OverlayGridOverlay
+from Simulation.PathPlanning.occupancy_grid_mapping import OccupancyGridMap, OverlayGrid
 from utils.config.config_loader import load_config
 from utils.logging_config import configure_logging
 from utils.carla_utils import initialize_carla, setup_synchronous_mode
@@ -184,13 +184,9 @@ def get_ego_vehicle_lidar_data(lidar_data_buffer, lidar_data_lock):
         logging.error(f"Error retrieving LIDAR data: {e}")
         return np.array([])  # Return an empty array in case of error
     
-def preprocess_fused_results(fused_results):
-    """
-    Preprocess the fused results to extract obstacle positions.
-    :param fused_results: List of detection results from DataFusion.
-    :return: List of obstacle positions [(x, y), ...].
-    """
+"""def preprocess_fused_results(fused_results):
     obstacle_positions = []
+    logging.debug(f"Fused results received for preprocessing: {fused_results}")
 
     for result in fused_results:
         if "bbox" in result:
@@ -200,7 +196,7 @@ def preprocess_fused_results(fused_results):
             obstacle_positions.append((x_center, y_center))
 
     logging.debug(f"Preprocessed obstacle positions: {obstacle_positions}")
-    return obstacle_positions
+    return obstacle_positions"""
 
 # Define obstacle_worker 
 def obstacle_worker(obstacle_detection_queue):
@@ -216,24 +212,114 @@ def obstacle_worker(obstacle_detection_queue):
 
             # Perform obstacle detection
             try:
-                logging.info(f"Processing frame {frame_number} in the obstacle worker.")
-                fused_results = data_fusion.fuse_data(camera_frame, lidar_data)
-
-                # Log obstacle detection results
-                logging.info(f"Obstacle detection completed for frame {frame_number}. Fused results: {fused_results}")
-
                 # Update occupancy grid
                 ego_vehicle_location = {
                     "x": ego_vehicle.get_transform().location.x,
                     "y": ego_vehicle.get_transform().location.y,
                     "z": ego_vehicle.get_transform().location.z
                 }
-                obstacle_positions = preprocess_fused_results(fused_results)
-                occupancy_grid.update_with_obstacles(obstacle_positions, ego_vehicle_location)
+                # LiDAR Extrinsic Matrix (derived from setup)
+                lidar_to_vehicle_extrinsics = np.array([
+                    [1, 0, 0, 0.0],  # Identity rotation matrix with translation
+                    [0, 1, 0, 0.0],
+                    [0, 0, 1, 1.6],
+                    [0, 0, 0, 1.0]
+                ])
+                # Transform LiDAR points to the vehicle frame
+                lidar_points = lidar_data[:, :3]  # Extract (x, y, z)
+                lidar_points_homogeneous = np.hstack((lidar_points, np.ones((lidar_points.shape[0], 1))))  # Convert to homogeneous
+                lidar_points_vehicle_frame = (lidar_to_vehicle_extrinsics @ lidar_points_homogeneous.T).T
 
-                # Overlay and save the occupancy grid on the camera frame
-                combined_image = overlay_grid.overlay_on_image(camera_frame)
-                overlay_grid.save_frame(combined_image, frame_number)
+                # Transform to world frame
+                ego_transform = ego_vehicle.get_transform()
+                vehicle_to_world_matrix = np.array([
+                    [ego_transform.get_matrix()[0][0], ego_transform.get_matrix()[0][1], ego_transform.get_matrix()[0][2], ego_vehicle_location["x"]],
+                    [ego_transform.get_matrix()[1][0], ego_transform.get_matrix()[1][1], ego_transform.get_matrix()[1][2], ego_vehicle_location["y"]],
+                    [ego_transform.get_matrix()[2][0], ego_transform.get_matrix()[2][1], ego_transform.get_matrix()[2][2], ego_vehicle_location["z"]],
+                    [0, 0, 0, 1]
+                ])
+                lidar_points_world_frame = (vehicle_to_world_matrix @ lidar_points_vehicle_frame.T).T[:, :3]
+
+                logging.info(f"Processing frame {frame_number} in the obstacle worker.")
+                fused_results = data_fusion.fuse_data(camera_frame, lidar_points_world_frame)
+
+                # Log obstacle detection results
+                logging.info(f"Obstacle detection completed for frame {frame_number}. Fused results: {fused_results}")
+
+                try:
+                    logging.info(f"Before Preprocessing : {fused_results}")
+
+                    obstacle_positions = []
+                    for result in fused_results:
+                        if "bbox" in result:
+                            # Extract bounding box center
+                            if len(result["bbox"]) != 4:
+                                logging.warning(f"Invalid bounding box: {result['bbox']}")
+                                continue
+                            # Extract bounding box center
+                            x_center = (result["bbox"][0] + result["bbox"][2]) / 2
+                            y_center = (result["bbox"][1] + result["bbox"][3]) / 2
+
+                            if result["source"] == "camera":
+                                try:
+                                    camera_intrinsics = {
+                                        "fx": 652.8,
+                                        "fy": 652.8,
+                                        "cx": 640,
+                                        "cy": 360
+                                    }
+                                    # Back-project image coordinates to the world frame
+                                    depth = occupancy_grid.estimate_depth_from_lidar(x_center, y_center, lidar_data, camera_intrinsics)
+                                    if depth is None:
+                                        logging.warning(f"Unable to estimate depth for camera detection at ({x_center}, {y_center}). Skipping...")
+                                        continue
+                                    
+                                    # Back-project to camera coordinates
+                                    camera_x = (x_center - camera_intrinsics["cx"]) * depth / camera_intrinsics["fx"]
+                                    camera_y = (y_center - camera_intrinsics["cy"]) * depth / camera_intrinsics["fy"]
+                                    camera_z = depth
+                                    camera_coords = np.array([camera_x, camera_y, camera_z])
+
+                                    # Ensure proper shape for transformation
+                                    camera_coords = camera_coords.reshape(1, -1)
+
+                                    # Transform to world coordinates
+                                    world_coords = occupancy_grid.camera_to_world_coordinates(camera_coords, ego_vehicle_location)
+                                    obstacle_positions.append((world_coords[0, 0], world_coords[0, 1]))
+                                    logging.debug(f"Camera detection added in world frame: ({world_coords[0, 0]}, {world_coords[0, 1]})")
+                                except Exception as e:
+                                    logging.error(f"Error transforming camera coordinates to world frame: {e}")
+                                    continue
+
+
+                            elif result["source"] == "lidar":
+                                # LiDAR/BEV detections are assumed to be in the world frame
+                                lidar_center = np.array([x_center, y_center, 0])  # Assuming these are BEV world coordinates
+                                logging.debug(f"LiDAR center: {lidar_center}")
+
+                                # Validate before adding to obstacle positions
+                                if len(lidar_center) != 3:
+                                    logging.error(f"LiDAR center has invalid shape: {lidar_center}")
+                                    continue
+                                # Convert to world frame if necessary
+                                world_coords = lidar_center[:2]  # Assuming BEV x, y are world coordinates
+                                obstacle_positions.append((world_coords[0], world_coords[1]))
+                                logging.debug(f"LiDAR detection added in world frame: ({world_coords[0]}, {world_coords[1]})")
+                                
+                    # Pass camera intrinsics
+                    camera_intrinsics = {
+                        "fx": 652.8,
+                        "fy": 652.8,
+                        "cx": 640,
+                        "cy": 360
+                    }
+                    logging.info(f"After Preprocessing : {obstacle_positions}")
+                    
+                    occupancy_grid.update_with_obstacles(obstacle_positions, ego_vehicle_location, camera_intrinsics, lidar_data)
+
+                    overlay_grid.save_grid(frame_number)
+                except Exception as e:
+                    logging.error(f"Error during preprocessing for frame {frame_number}: {e}")
 
             except Exception as e:
                 logging.error(f"Error in obstacle detection for frame {frame_number}: {e}")
@@ -277,7 +363,7 @@ def game_loop(world, game_display, camera, render_object, control_object, vehicl
     cell_size = 0.1  # Each cell represents 0.1 meters
     world_size = (50, 50)  # World size is 50x50 meters
     occupancy_grid = OccupancyGridMap(grid_size, cell_size, world_size)
-    overlay_grid = OverlayGridOverlay(occupancy_grid, cell_size, world_size, save_folder="frames/occ_map")
+    overlay_grid = OverlayGrid(occupancy_grid, save_folder="frames/occ_map")
 
     try:
         while not crashed:

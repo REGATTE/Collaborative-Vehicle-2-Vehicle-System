@@ -2,6 +2,7 @@ import numpy as np
 import logging
 import cv2
 import os
+import time
 
 class OccupancyGridMap:
     def __init__(self, grid_size, cell_size, world_size):
@@ -30,123 +31,260 @@ class OccupancyGridMap:
         j = int((y + self.world_size[1] / 2) / self.cell_size)
         logging.debug(f"Converted world coordinates ({x}, {y}) to grid coordinates ({i}, {j}).")
         return i, j
+    
+    def camera_to_world_coordinates(self, camera_coords, ego_vehicle_location):
+        """
+        Transform 3D camera coordinates to world coordinates.
 
-    def update_with_obstacles(self, detections, ego_vehicle_location, image_width=1920, image_height=1080):
+        :param camera_coords: Nx3 array of 3D points in camera coordinates.
+        :param ego_vehicle_location: Ego vehicle's current world coordinates (x, y, z).
+        :return: Nx3 array of 3D world coordinates.
+        """
+        try:
+            # Ensure input is 2D
+            if camera_coords.ndim != 1 and camera_coords.shape[-1] != 3:
+                logging.error(f"Invalid camera coordinates shape: {camera_coords.shape}")
+                raise ValueError("Camera coordinates must have 3 values per point.")
+            if not np.isfinite(camera_coords).all():
+                logging.error(f"Non-finite camera coordinates: {camera_coords}")
+                raise ValueError("Camera coordinates contain invalid values.")
+            logging.debug(f"Camera coordinates (reshaped if needed): {camera_coords}")
+
+            # Extrinsic matrix (camera-to-world transformation)
+            extrinsic_matrix = np.array([
+                [1, 0, 0, 0.7],
+                [0, 1, 0, 0.0],
+                [0, 0, 1, 1.6]
+            ])
+
+            # Transform camera coordinates to world coordinates
+            camera_coords_homogeneous = np.hstack((camera_coords, np.ones((camera_coords.shape[0], 1))))  # Convert to homogeneous
+            logging.debug(f"Camera coordinates (homogeneous): {camera_coords_homogeneous}")
+            
+            world_coords = (extrinsic_matrix @ camera_coords_homogeneous.T).T  # Matrix multiplication and transpose
+            world_coords = world_coords[:, :3]  # Convert back to 3D coordinates
+
+            # Add ego vehicle's location in the world
+            world_coords += np.array([ego_vehicle_location["x"], ego_vehicle_location["y"], ego_vehicle_location["z"]])
+            logging.debug(f"Transformed world coordinates: {world_coords}")
+            return world_coords
+        except Exception as e:
+            logging.error(f"Error in camera_to_world_coordinates: {e}")
+            raise
+
+    
+    def project_lidar_to_image(self, points, camera_intrinsics):
+        """
+        Project 3D LiDAR points to the image plane using the intrinsic camera matrix.
+
+        :param points: Nx3 array of LiDAR points in camera coordinates.
+        :param camera_intrinsics: Intrinsic camera parameters as a dictionary.
+        :return: Nx2 array of 2D image coordinates.
+        """
+        fx, fy = camera_intrinsics["fx"], camera_intrinsics["fy"]
+        cx, cy = camera_intrinsics["cx"], camera_intrinsics["cy"]
+
+        # Extract coordinates
+        x, y, z = points[:, 0], points[:, 1], points[:, 2]
+
+        # Log raw points
+        logging.info(f"LiDAR points (camera frame): {points}")
+
+        # Filter out points with z <= 0
+        valid = z > 0
+        x, y, z = x[valid], y[valid], z[valid]
+
+        # Project to 2D
+        u = (x * fx / z) + cx
+        v = (y * fy / z) + cy
+
+        projected_points = np.stack((u, v), axis=1)
+
+        # Log projected points
+        logging.info(f"Projected points on the image plane: {projected_points}")
+
+        return projected_points
+
+    def estimate_depth_from_lidar(self, image_x, image_y, lidar_data, camera_intrinsics):
+        """
+        Estimate depth at the given image coordinates using LiDAR data.
+
+        :param image_x: Image x-coordinate.
+        :param image_y: Image y-coordinate.
+        :param lidar_data: LiDAR point cloud data.
+        :param camera_intrinsics: Camera intrinsic matrix.
+        :return: Depth (z-coordinate in camera space).
+        """
+
+        try:
+            # Extract spatial coordinates and intensity
+            lidar_points_camera = lidar_data[:, :3]  # Extract x, y, z
+            intensities = lidar_data[:, 3]  # Extract intensity
+
+            # Filter points with low intensity (adjust threshold as needed)
+            intensity_threshold = 0.5
+            valid_intensity = intensities > intensity_threshold
+            lidar_points_camera = lidar_points_camera[valid_intensity]
+
+            # Filter points where z > 0 (points in front of the camera)
+            valid_points = lidar_points_camera[:, 2] > 0
+            lidar_points_camera = lidar_points_camera[valid_points]
+
+            if lidar_points_camera.shape[0] == 0:
+                logging.warning("No valid LiDAR points found.")
+                return None
+            
+            # Extract intrinsic parameters
+            fx, fy = camera_intrinsics["fx"], camera_intrinsics["fy"]
+            cx, cy = camera_intrinsics["cx"], camera_intrinsics["cy"]
+
+            # Project LiDAR points to the image plane
+            x_camera, y_camera, z_camera = lidar_points_camera[:, 0], lidar_points_camera[:, 1], lidar_points_camera[:, 2]
+            u = (x_camera * fx / z_camera) + cx
+            v = (y_camera * fy / z_camera) + cy
+            projected_points = np.stack((u, v), axis=1)
+
+            # Log projected points for debugging
+            logging.debug(f"Projected LiDAR points (first 5): {projected_points[:5]}")  # Log first 5 points
+            logging.debug(f"Corresponding depths (first 5): {z_camera[:5]}")  # Log first 5 depths
+
+            # Calculate distances to the image point
+            distances = np.sqrt((projected_points[:, 0] - image_x) ** 2 +
+                                (projected_points[:, 1] - image_y) ** 2)
+
+            # Find the closest projected point to the given image coordinates
+            min_idx = np.argmin(distances)
+            closest_distance = distances[min_idx]
+            closest_depth = z_camera[min_idx]
+
+            # Log details of the closest point
+            logging.info(f"Closest point index: {min_idx}, distance: {closest_distance:.2f}, depth: {closest_depth:.2f}")
+
+            # Dynamic threshold adjustment based on data statistics
+            dynamic_threshold = min(5000, max(closest_distance * 2, 100))  # Example: threshold depends on closest distance
+            logging.info(f"Dynamic threshold: {dynamic_threshold:.2f}")
+
+            # Check if the closest point is within the threshold
+            if closest_distance < dynamic_threshold:
+                return closest_depth
+            else:
+                logging.warning(f"No valid depth found for image point ({image_x}, {image_y}). Closest distance: {closest_distance:.2f}")
+                return None
+
+        except Exception as e:
+            logging.error(f"Error estimating depth: {e}")
+            return None
+
+    def update_with_obstacles(self, detections, ego_vehicle_location, camera_intrinsics, lidar_data):
         """
         Update the occupancy grid based on detected obstacles.
-        :param detections: List of detected obstacles.
+
+        :param detections: List of detected obstacles in image coordinates [(x, y), ...].
         :param ego_vehicle_location: Ego vehicle's current world coordinates (x, y, z).
-        :param image_width: Width of the camera image (default: 1920).
-        :param image_height: Height of the camera image (default: 1080).
+        :param camera_intrinsics: Intrinsic camera parameters as a dictionary (focal lengths, principal points).
+        :param lidar_data: LiDAR point cloud data.
         """
         logging.info("Updating occupancy grid with detected obstacles...")
+
+        # Validate detections
+        # Validate detections
+        if not isinstance(detections, list) or not all(isinstance(det, (list, tuple)) and len(det) == 2 for det in detections):
+            logging.error(f"Invalid detection format: {detections}. Expected a list of (x, y) tuples.")
+            return
+
         updated_cells = 0
 
         for det in detections:
-            if "bbox" in det:
-                # Get the center of the bounding box in pixel space
-                bbox_center_x = (det["bbox"][0] + det["bbox"][2]) / 2  # X center of bbox
-                bbox_center_y = (det["bbox"][1] + det["bbox"][3]) / 2  # Y center of bbox
+            try:
+                # Image coordinates (bounding box center)
+                image_x, image_y = det
 
-                # Normalize to [0, 1]
-                normalized_x = bbox_center_x / image_width
-                normalized_y = bbox_center_y / image_height
+                # Ensure indices are integers for any array indexing
+                int_image_x = int(image_x)
+                int_image_y = int(image_y)
 
-                # Map to world coordinates (assuming camera is forward-facing)
-                world_x = ego_vehicle_location[0] + (normalized_x - 0.5) * self.world_size[0]
-                world_y = ego_vehicle_location[1] - (normalized_y - 0.5) * self.world_size[1]
+                # Approximate depth using LiDAR data
+                depth = self.estimate_depth_from_lidar(int_image_x, int_image_y, lidar_data, camera_intrinsics)
+                if depth is None or depth <= 0:
+                    logging.warning(f"Invalid or missing depth ({depth}) for detection at ({image_x}, {image_y}). Skipping...")
+                    continue
 
-                # Map to grid cell
-                grid_x = int(world_x / self.cell_size)
-                grid_y = int(world_y / self.cell_size)
+                # Back-project to camera coordinates
+                camera_coords = np.array([(image_x - camera_intrinsics["cx"]) * depth / camera_intrinsics["fx"],
+                                        (image_y - camera_intrinsics["cy"]) * depth / camera_intrinsics["fy"],
+                                        depth]).reshape(1, -1)
 
-                # Ensure the cell is within bounds
-                if 0 <= grid_x < self.grid_width and 0 <= grid_y < self.grid_height:
-                    self.grid[grid_y, grid_x] = 1  # Mark cell as occupied
-                    updated_cells += 1
+                # Transform to world coordinates
+                world_coords = self.camera_to_world_coordinates(camera_coords, ego_vehicle_location)
+                world_x, world_y, _ = world_coords.flatten()
 
-                    # Logging for debugging
-                    logging.debug(f"Detection bbox: {det['bbox']}, World: ({world_x:.2f}, {world_y:.2f}), Grid: ({grid_x}, {grid_y})")
+                # Log details
+                # Log transformed coordinates
+                logging.info(f"Detection at ({image_x}, {image_y}): Depth={depth:.2f}, "
+                            f"Camera Coords={camera_coords}, World Coords=({world_x:.2f}, {world_y:.2f})")
+    
+                # Convert world coordinates to grid indices
+                grid_x, grid_y = self._world_to_grid(world_x, world_y)
+                grid_x = max(0, min(self.grid_size[0] - 1, int(grid_x)))
+                grid_y = max(0, min(self.grid_size[1] - 1, int(grid_y)))
+                if not (0 <= grid_x < self.grid_size[0] and 0 <= grid_y < self.grid_size[1]):
+                    logging.warning(f"Grid indices ({grid_x}, {grid_y}) out of bounds for world coordinates ({world_x:.2f}, {world_y:.2f}).")
+                    continue
+
+                # Mark the cell in the grid
+                self.grid[grid_y, grid_x] = 1
+                updated_cells += 1
+            except Exception as e:
+                logging.error(f"Error updating obstacle: {det}, {e}")
 
         logging.info(f"Updated {updated_cells} grid cells with obstacles.")
-
 
     def reset(self):
         """Reset the grid to all free cells."""
         logging.info("Resetting Occupancy Grid Map to all free cells.")
         self.grid.fill(0)
 
-    def visualize(self):
-        """Visualize the occupancy grid as a simple ASCII map."""
-        logging.info("Visualizing occupancy grid:")
-        for row in self.grid:
-            print("".join(["#" if cell == 1 else "." for cell in row]))
-
-class OverlayGridOverlay:
-    def __init__(self, grid_map, cell_size, world_size, save_folder="frames/OccMap"):
+class OverlayGrid:
+    def __init__(self, grid_map, save_folder="frames/OccMap"):
         """
         Initialize the overlay grid for visualization.
+
         :param grid_map: OccupancyGridMap object.
-        :param cell_size: Size of each grid cell in meters.
-        :param world_size: Tuple (width, height) representing world dimensions in meters.
+        :param save_folder: Folder where the grid images will be saved.
         """
         logging.info("Initializing Overlay Grid...")
         self.grid_map = grid_map
-        self.cell_size = cell_size
-        self.world_size = world_size
         self.save_folder = save_folder
         os.makedirs(self.save_folder, exist_ok=True)
 
-    def create_overlay(self):
+    def save_grid(self, frame_number, timestamp=None):
         """
-        Create a visual representation of the occupancy grid map.
-        :return: OpenCV image of the overlay.
+        Save the occupancy grid as an image.
+
+        :param frame_number: The frame number to use in the file name.
+        :param timestamp: Optional timestamp to include in the file name.
         """
-        logging.info("Creating overlay for Occupancy Grid Map...")
         grid = self.grid_map.grid
         grid_height, grid_width = grid.shape
 
-        overlay = np.zeros((grid_height, grid_width, 3), dtype=np.uint8)
+        # Convert grid to an image
+        grid_image = np.zeros((grid_height, grid_width, 3), dtype=np.uint8)
         for i in range(grid_height):
             for j in range(grid_width):
                 if grid[i, j] == 1:  # Occupied cell
-                    overlay[i, j] = (0, 0, 255)  # Red
+                    grid_image[i, j] = (0, 0, 255)  # Red
                 else:  # Free cell
-                    overlay[i, j] = (0, 255, 0)  # Green
-        # Resize overlay to match the CARLA map/world dimensions
-        logging.debug("Resizing overlay to match world dimensions.")
-        overlay = cv2.resize(
-            overlay,
-            (int(self.world_size[0] / self.cell_size), int(self.world_size[1] / self.cell_size)),
-            interpolation=cv2.INTER_NEAREST
+                    grid_image[i, j] = (0, 255, 0)  # Green
+
+        # Construct the file name with optional timestamp
+        if timestamp is None:
+            timestamp = int(time.time())  # Use current time if timestamp is not provided
+
+        file_name = os.path.join(
+            self.save_folder,
+            f"grid_{frame_number:04d}_{timestamp}.png"
         )
-        return overlay
 
-    def overlay_on_image(self, base_image):
-        """
-        Overlay the occupancy grid map on a base image.
-        :param base_image: The image to overlay the grid on (e.g., CARLA camera view).
-        :return: Combined image.
-        """
-        logging.info("Overlaying Occupancy Grid Map on the base image...")
-        overlay = self.create_overlay()
-
-        # Resize the overlay to match the base image dimensions
-        overlay_resized = cv2.resize(overlay, (base_image.shape[1], base_image.shape[0]))
-
-        # Add transparency to the overlay
-        alpha = 0.3  # Transparency level
-        combined_image = cv2.addWeighted(base_image, 0.7, overlay_resized, alpha, 0)
-        logging.debug("Overlay created successfully.")
-        return combined_image
-
-    def save_frame(self, combined_image, frame_number):
-        """
-        Save the overlaid image to a file.
-
-        :param combined_image: The overlaid image to save.
-        :param frame_number: The frame number to use in the file name.
-        """
-        file_name = os.path.join(self.save_folder, f"frame_{frame_number:04d}.png")
-        cv2.imwrite(file_name, combined_image)
-        logging.info(f"Saved frame {frame_number} to {file_name}.")
+        # Save the grid image
+        cv2.imwrite(file_name, grid_image)
+        logging.info(f"Saved grid frame {frame_number} to {file_name}.")
