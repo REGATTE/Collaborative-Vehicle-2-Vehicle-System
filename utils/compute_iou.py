@@ -1,19 +1,20 @@
 import json
 
-# Load JSON files
-with open('/data/UCR_student/sds/code/Collaborative-Vehicle-2-Vehicle-System/misc/output/det_bounding_boxes/det_bounding_boxes_1733036940701.json') as f:
-    det_bboxes = json.load(f)
-
-with open('/data/UCR_student/sds/code/Collaborative-Vehicle-2-Vehicle-System/misc/output/gt_bounding_boxes/gt_bounding_boxes_1733036940677.json') as f:
-    gt_bboxes = json.load(f)
+def load_json(file_path):
+    """Load JSON file from disk."""
+    with open(file_path, "r") as file:
+        return json.load(file)
 
 def calculate_volume(extent):
     """Calculate volume of a bounding box given its extent."""
     return extent["x"] * extent["y"] * extent["z"]
 
-def calculate_iou(box1, box2):
+def calculate_iou(file_path_box1, file_path_box2):
     """Calculate IoU for two 3D bounding boxes."""
     # Determine the min and max points for both boxes
+    box1 = load_json(file_path_box1)
+    box2 = load_json(file_path_box2)
+
     box1_min = {dim: box1["location"][dim] - box1["extent"][dim] / 2 for dim in ["x", "y", "z"]}
     box1_max = {dim: box1["location"][dim] + box1["extent"][dim] / 2 for dim in ["x", "y", "z"]}
 
@@ -33,13 +34,13 @@ def calculate_iou(box1, box2):
 
     return intersection_volume / union_volume if union_volume > 0 else 0
 
-# Compute IoU for each pair of det and gt bounding boxes
-iou_scores = []
-for det_box in det_bboxes:
-    for gt_box in gt_bboxes:
-        iou_score = calculate_iou(det_box, gt_box)
-        iou_scores.append({"det_box": det_box, "gt_box": gt_box, "iou": iou_score})
+# # Compute IoU for each pair of det and gt bounding boxes
+# iou_scores = []
+# for det_box in det_bboxes:
+#     for gt_box in gt_bboxes:
+#         iou_score = calculate_iou(det_box, gt_box)
+#         iou_scores.append({"det_box": det_box, "gt_box": gt_box, "iou": iou_score})
 
-# Print IoU scores
-for score in iou_scores:
-    print(f"Det Box: {score['det_box']['location']}, GT Box: {score['gt_box']['location']}, IoU: {score['iou']:.4f}")
+# # Print IoU scores
+# for score in iou_scores:
+#     print(f"Det Box: {score['det_box']['location']}, GT Box: {score['gt_box']['location']}, IoU: {score['iou']:.4f}")
