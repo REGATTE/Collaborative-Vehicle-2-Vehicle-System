@@ -32,7 +32,17 @@ def calculate_iou(file_path_box1, file_path_box2):
     volume2 = calculate_volume(box2["extent"])
     union_volume = volume1 + volume2 - intersection_volume
 
-    return intersection_volume / union_volume if union_volume > 0 else 0
+    # Calculate IoU
+    iou = intersection_volume / union_volume if union_volume > 0 else 0
+    
+    # Check against thresholds
+    iou_thresholds = [0.3, 0.5, 0.7]
+    iou_results = {threshold: iou >= threshold for threshold in iou_thresholds}
+    
+    return iou, iou_results
+    # print(f"IoU: {iou}")
+    # for threshold, passed in iou_thresholds.items():
+    #     print(f"Threshold {threshold}: {'Passed' if passed else 'Failed'}")
 
 # # Compute IoU for each pair of det and gt bounding boxes
 # iou_scores = []
