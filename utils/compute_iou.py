@@ -1,39 +1,45 @@
-import os
 import json
 
-def compute_iou(box1, box2):
-    # Calculate the (x, y) coordinates of the intersection rectangle
-    x1_max = max(box1[0], box2[0])
-    y1_max = max(box1[1], box2[1])
-    x2_min = min(box1[2], box2[2])
-    y2_min = min(box1[3], box2[3])
+# Load JSON files
+with open('/data/UCR_student/sds/code/Collaborative-Vehicle-2-Vehicle-System/misc/output/det_bounding_boxes/det_bounding_boxes_1733036940701.json') as f:
+    det_bboxes = json.load(f)
 
-    # Calculate the area of intersection rectangle
-    inter_area = max(0, x2_min - x1_max) * max(0, y2_min - y1_max)
+with open('/data/UCR_student/sds/code/Collaborative-Vehicle-2-Vehicle-System/misc/output/gt_bounding_boxes/gt_bounding_boxes_1733036940677.json') as f:
+    gt_bboxes = json.load(f)
 
-    # Calculate the area of both bounding boxes
-    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
-    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+def calculate_volume(extent):
+    """Calculate volume of a bounding box given its extent."""
+    return extent["x"] * extent["y"] * extent["z"]
 
-    # Calculate the union area
-    union_area = box1_area + box2_area - inter_area
+def calculate_iou(box1, box2):
+    """Calculate IoU for two 3D bounding boxes."""
+    # Determine the min and max points for both boxes
+    box1_min = {dim: box1["location"][dim] - box1["extent"][dim] / 2 for dim in ["x", "y", "z"]}
+    box1_max = {dim: box1["location"][dim] + box1["extent"][dim] / 2 for dim in ["x", "y", "z"]}
 
-    # Compute the IoU
-    iou = inter_area / union_area if union_area != 0 else 0
-    return iou
+    box2_min = {dim: box2["location"][dim] - box2["extent"][dim] / 2 for dim in ["x", "y", "z"]}
+    box2_max = {dim: box2["location"][dim] + box2["extent"][dim] / 2 for dim in ["x", "y", "z"]}
 
-def test():
-    input_dir = '../misc/outputs'
-    json_files = [f for f in os.listdir(input_dir) if f.endswith('.json')]
-    print(f'Found {len(json_files)} json files in {input_dir}')
+    # Calculate overlap in each dimension
+    overlap_min = {dim: max(box1_min[dim], box2_min[dim]) for dim in ["x", "y", "z"]}
+    overlap_max = {dim: min(box1_max[dim], box2_max[dim]) for dim in ["x", "y", "z"]}
+    overlap_extent = {dim: max(0, overlap_max[dim] - overlap_min[dim]) for dim in ["x", "y", "z"]}
 
-    for json_file in json_files:
-        with open(os.path.join(input_dir, json_file), 'r') as f:
-            data = json.load(f)
-            box1 = data['box1']
-            box2 = data['box2']
-            iou = compute_iou(box1, box2)
-            print(f'IoU for {json_file}: {iou}')
+    # Calculate intersection and union volumes
+    intersection_volume = calculate_volume(overlap_extent)
+    volume1 = calculate_volume(box1["extent"])
+    volume2 = calculate_volume(box2["extent"])
+    union_volume = volume1 + volume2 - intersection_volume
 
-if __name__ == "__main__":
-    test()
+    return intersection_volume / union_volume if union_volume > 0 else 0
+
+# Compute IoU for each pair of det and gt bounding boxes
+iou_scores = []
+for det_box in det_bboxes:
+    for gt_box in gt_bboxes:
+        iou_score = calculate_iou(det_box, gt_box)
+        iou_scores.append({"det_box": det_box, "gt_box": gt_box, "iou": iou_score})
+
+# Print IoU scores
+for score in iou_scores:
+    print(f"Det Box: {score['det_box']['location']}, GT Box: {score['gt_box']['location']}, IoU: {score['iou']:.4f}")
