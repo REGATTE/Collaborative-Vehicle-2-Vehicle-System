@@ -65,23 +65,26 @@ class BEVVisualizer:
         try:
             # Create a one-off TCP connection for combined data
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+                client_socket.settimeout(0.1)  # Set a timeout to avoid blocking
                 client_socket.bind((self.host, self.combined_port))
                 client_socket.listen(1)  # Listen for one connection at a time
-                logging.info("Waiting for combined LIDAR data...")
-                conn, addr = client_socket.accept()
-                logging.info(f"Connection established with {addr}.")
+                try:
+                    conn, addr = client_socket.accept()
+                    logging.info(f"Connection established with {addr}.")
 
-                data = b""
-                while True:
-                    chunk = conn.recv(4096)
-                    if b"<END>" in chunk:
-                        data += chunk.split(b"<END>")[0]
-                        break
-                    data += chunk
+                    data = b""
+                    while True:
+                        chunk = conn.recv(4096)
+                        if b"<END>" in chunk:
+                            data += chunk.split(b"<END>")[0]
+                            break
+                        data += chunk
 
-                combined_lidar_data = pickle.loads(data)  # Deserialize the data
-                logging.info(f"Received combined LIDAR data with {len(combined_lidar_data)} points.")
-                return np.array(combined_lidar_data, dtype=np.float32)
+                    combined_lidar_data = pickle.loads(data)  # Deserialize the data
+                    logging.info(f"Received combined LIDAR data with {len(combined_lidar_data)} points.")
+                    return np.array(combined_lidar_data, dtype=np.float32)
+                except socket.timeout:
+                    return None  # No data received within timeout
 
         except Exception as e:
             logging.error(f"Error receiving combined LIDAR data: {e}")
@@ -94,7 +97,6 @@ class BEVVisualizer:
         if self.ego_socket:
             self.ego_socket.close()
             logging.info("Disconnected from Ego LiDAR Data Server.")
-
 
 class BEVRenderer:
     """
@@ -117,23 +119,23 @@ class BEVRenderer:
 
     def draw_lidar_points(self, lidar_array):
         """
-        Draws LiDAR points on the PyGame window.
+        Draws LiDAR points on the PyGame window, flipped vertically.
         :param lidar_array: NumPy array of LiDAR points (x, y, z, intensity).
         """
         self.screen.fill((0, 0, 0))  # Clear the screen with black
         for point in lidar_array:
-            x, y = int(point[0] * 10 + self.width // 2), int(self.height // 2 - point[1] * 10)
+            x, y = int(point[0] * 10 + self.width // 2), int(self.height // 2 + point[1] * 10)
             pygame.draw.circle(self.screen, (0, 255, 0), (x, y), 2)  # Green points
         pygame.display.flip()
 
     def draw_combined_lidar_points(self, combined_lidar_array):
         """
-        Draws combined LiDAR points on the PyGame window.
+        Draws combined LiDAR points on the PyGame window, flipped vertically.
         :param combined_lidar_array: NumPy array of combined LiDAR points.
         """
         self.screen.fill((0, 0, 0))  # Clear the screen with black
         for point in combined_lidar_array:
-            x, y = int(point[0] * 10 + self.width // 2), int(self.height // 2 - point[1] * 10)
+            x, y = int(point[0] * 10 + self.width // 2), int(self.height // 2 + point[1] * 10)
             pygame.draw.circle(self.screen, (255, 0, 0), (x, y), 2)  # Red points for combined data
         pygame.display.flip()
 
