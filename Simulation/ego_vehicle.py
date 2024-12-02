@@ -6,6 +6,7 @@ import numpy as np
 import time
 import os, sys, cv2
 import logging
+import pickle
 
 from utils.proximity_mapping import ProximityMapping
 from utils.vehicle_mapping.vehicle_mapping import load_vehicle_mapping
@@ -540,7 +541,21 @@ class EgoVehicleListener:
         except Exception as e:
             logging.error(f"Error processing data for {vehicle_label}: {e}")
 
-    def self.
+    def send_combined_lidar_data(self, combined_lidar_data):
+        """
+        Sends combined LIDAR data to visualize_bev.py over a TCP connection.
+        """
+        try:
+            # Serialize the combined LIDAR data
+            serialized_data = pickle.dumps(combined_lidar_data)
+
+            # Create a one-off TCP connection
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+                client_socket.connect(('127.0.0.1', 65434))
+                client_socket.sendall(serialized_data + b"<END>")  # Add delimiter for receiver
+                logging.info("Combined LIDAR data sent successfully.")
+        except Exception as e:
+            logging.error(f"Failed to send combined LIDAR data: {e}")
 
     def _get_all_valid_actors(self):
         """
